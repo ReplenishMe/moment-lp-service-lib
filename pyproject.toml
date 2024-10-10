@@ -12,7 +12,8 @@ dependencies = [
     'sqlalchemy',
     'loguru',
     'python-dotenv',
-    'momenttrack_shared_models @ file://C:/Users/curiouspaul/Documents/projects/moment-shared-models-lib'
+    'dictdiffer',
+    'momenttrack_shared_models @ git+https://github.com/ReplenishMe/momenttrack_shared_models'
 ]
 description = "license plate services in our backend suite"
 classifiers = [

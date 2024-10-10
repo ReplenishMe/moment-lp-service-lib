@@ -19,6 +19,6 @@ conf = {
 agent = LicensePlateServiceAgent(conf)
 
 lp_move = agent.move(
-    3233, 358, 4, {}, 2
+    2202, 358, 4, {}, 2
 )
 print(lp_move)

@@ -10,6 +10,13 @@ from momenttrack_shared_models import (
     ProductionOrderLineitem,
     LicensePlateMove
 )
+from momenttrack_shared_models.core.schemas import (
+    LicensePlateMoveSchema,
+    LicensePlateMoveLogsSchema,
+    LocationSchema,
+    LicensePlateSchema,
+    LicensePlateOpenSearchSchema
+)
 
 from momenttrack_shared_services.messages import \
      LICENSE_PLATE_MOVE_NOT_PERMITTED_WITH_SAME_DESTINATION as invalid_move_msg
@@ -18,10 +25,6 @@ from momenttrack_shared_services import messages as MSG
 from momenttrack_shared_services.utils import (
     HttpError,
     create_or_update_doc,
-    LicensePlateMoveSchema,
-    LicensePlateMoveLogsSchema,
-    LocationSchema,
-    LicensePlateSchema,
     DBErrorHandler,
     update_line_items,
     update_prd_order_totals
@@ -185,7 +188,7 @@ class Move:
                 self.client,
                 lp,
                 LicensePlateSchema(),
-                {"doc": LicensePlateMoveLogsSchema().dump(lp)},
+                {"doc": LicensePlateOpenSearchSchema().dump(lp)},
                 "lp_alias",
             )
             logger.info(
@@ -280,5 +283,5 @@ class Move:
                     loc=prev_loc,
                 )
         except Exception as e:
-            logger.error(e)
+            logger.exception(e)
         return resp

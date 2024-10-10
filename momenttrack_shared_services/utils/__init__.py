@@ -1,4 +1,7 @@
 import datetime
+from dictdiffer import (
+    diff, revert
+)
 import statistics
 import re
 
@@ -7,7 +10,8 @@ from momenttrack_shared_models import (
     LicensePlate,
     Product,
     User,
-    Location
+    Location,
+    Vendor
 )
 from momenttrack_shared_models.core.extensions import db
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
@@ -154,293 +158,33 @@ def _parse_ma_error(exc, data, **kwargs):
     return message
 
 
-class BaseSQLAlchemyAutoSchema(SQLAlchemyAutoSchema):
-    def handle_error(self, exc, data, **kwargs):
-        """Log and raise our custom exception when (de)serialization fails."""
-        message = _parse_ma_error(exc, data, **kwargs)
-
-        raise DataValidationError(message=message, errors=exc.messages, data=data)
-
-    @pre_load
-    def remove_skip_values(self, data, many, partial):
-        """Treat nulls & empty strings are undefined
-
-        As per these guidelines: https://google.github.io/styleguide/jsoncstyleguide.xml#Empty/Null_Property_Values
-        """
-        if not data:
-            return data
-
-        SKIP_VALUES = ["", None]
-        return {
-            key: value for key, value in data.items()
-            if value not in SKIP_VALUES
-        }
-
-    @pre_load
-    def emails_should_be_lower_case(self, data, many, partial):
-        """Convert all `email` fields to lower case"""
-        if data and "email" in data:
-            data["email"] = data["email"].lower()
-
-        return data
-
-
-class BaseMASchema(Schema):
-    def handle_error(self, exc, data, **kwargs):
-        """Log and raise our custom exception when (de)serialization fails."""
-        message = _parse_ma_error(exc, data, **kwargs)
-        raise DataValidationError(message=message, errors=exc.messages, data=data)
-
-    @pre_load
-    def emails_should_be_lower_case(self, data, many, partial):
-        """Convert all `email` fields to lower case"""
-        if data and "email" in data:
-            data["email"] = data["email"].lower()
-
-        return data
-
-
-class LicensePlateOpenSearchSchema(BaseSQLAlchemyAutoSchema):
-    id = ma.Int(dump_only=True)
-    created_at = ma.String(dump_only=True)
-    organization_id = ma.Integer(dump_only=True, required=False)
-    location = fields.Nested(
-        "LocationSchema", only=(
-            "name", "width", "height", "beacon_id", "depth"
-        )
-    )
-    product = fields.Nested(
-        "ProductSchema",
-        only=(
-            "part_number",
-            "description",
-        ),
-    )
-
-    class Meta:
-        model = LicensePlate
-        include_relationships = True
-        include_fk = True
-
-
-class LicensePlateSchema(BaseSQLAlchemyAutoSchema):
-    id = ma.Int(dump_only=True)
-    created_at = ma.String(dump_only=True)  # read-only
-    organization_id = ma.Integer(dump_only=True, required=False)  # read-only
-    location_id = ma.Integer(required=False)  # optional field
-    product = fields.Nested("ProductSchema", only=("part_number",))
-
-    class Meta:
-        exclude = ("updated_at",)
-        model = LicensePlate
-        sqla_session = db.session
-        load_instance = True
-        include_relationships = True
-        include_fk = True
-
-
-class LocationSchema(BaseSQLAlchemyAutoSchema):
-    id = ma.Int(dump_only=True)
-    created_at = ma.String(dump_only=True)  # read-only
-    organization_id = ma.Integer(dump_only=True, required=False)  # read-only
-
-    class Meta:
-        exclude = ("updated_at",)
-        model = Location
-        sqla_session = db.session
-        load_instance = True
-        # include_relationships = True
-        include_fk = True
-
-    @pre_load
-    def check_enum_value(self, data, **kwargs):
-        """intercepts 'unit' field in json and preformats it"""
-        if data:
-            if "unit" in data.keys():
-                data["unit"] = data["unit"].upper()
-            return data
-
-
-# class ProductSchema(BaseSQLAlchemyAutoSchema):
-#     id = ma.Int(dump_only=True)
-#     created_at = ma.String(dump_only=True)  # read-only
-#     organization_id = ma.Integer(dump_only=True)  # read-only
-#     preferred_vendor = ma.Nested("VendorSchema", dump_only=True)  # read-only
-
-#     class Meta:
-#         exclude = ("updated_at",)
-#         model = Product
-#         sqla_session = db.session
-#         load_instance = True
-#         include_relationships = True
-#         include_fk = True
-
-
-class LicensePlateMoveLogsSchema(BaseSQLAlchemyAutoSchema):
-    id = ma.Int(dump_only=True)
-    created_at = ma.String(dump_only=True, data_key="arrived_at")  # read-only
-    left_at = ma.String()
-    product = ma.Nested(
-        'ProductSchema',
-        exclude=(
-            "license_plate_move", "license_plates", "production_order"
-        ),
-        dump_only=True,
-    )
-    user = ma.Nested("UserSchema", dump_only=True)
-    license_plate = ma.Nested(
-        LicensePlateSchema(
-            only=(
-                "lp_id",
-                "quantity",
-                "id",
-                "external_serial_number",
-                "product_id",
-                "product",
-            )
-        ),
-        dump_only=True,
-    )
-
-    class Meta:
-        exclude = (
-            "updated_at",
-            "organization_id",
-            "trx_id",
-        )
-        model = LicensePlateMove
-        load_instance = True
-        include_relationships = True
-        include_fk = True
-
-    @pre_dump
-    def normalize_date(self, obj, *args, **kwargs):
-        if obj:
-            obj.created_at = obj.created_at.strftime("%Y-%m-%d %H:%M:%S.%f")
-            if obj.left_at:
-                obj.left_at = obj.left_at.strftime("%Y-%m-%d %H:%M:%S.%f")
-        return obj
-
-    @post_dump
-    def data_check(self, data, *, session=None, **kwargs):
-        if "lp_id" not in data["license_plate"]:
-            data["license_plate"] = LicensePlateSchema().dump(
-                LicensePlate.get_by_id_and_org(
-                    data["license_plate_id"], data["organization_id"]
-                )
-            )
-        return data
-
-
-# class UserSchema(BaseSQLAlchemyAutoSchema):
-#     id = ma.Int(dump_only=True)
-#     person_id = ma.String(dump_only=True)  # read-only
-#     created_at = ma.String(dump_only=True)  # read-only
-
-#     class Meta:
-#         exclude = (
-#             "confirmed_at",
-#             "updated_at",
-#             "password",
-#         )
-#         model = User
-#         load_instance = True
-#         include_fk = True
-
-
-class InvalidLengthError(Exception):
-    pass
-
-
-class LpMoveField(fields.Field):
-    #: Default error messages.
-    default_error_messages = {
-        "invalid": "Not a valid 'LpMoveField' value.",
-        "length": "Invalid length for field value",
+def saobj_as_dict(sa_obj):
+    return {
+        column: getattr(sa_obj, column)
+        for column in sa_obj.__table__.c.keys()
+        if getattr(sa_obj, column)
     }
 
-    def __init__(self, allowed_len=None, **kwargs):
-        super().__init__(**kwargs)
-        self.allowed_len = allowed_len
 
-    def _verifyData(self, val):
-        int_cond = isinstance(val, int)
-        str_cond = isinstance(val, str)
+def get_diff(obj1, obj2, ignore_keys=None):
+    """Get diff between two objects (supports only Dicts for now)
 
-        assert (int_cond or str_cond) == True
-
-        if str_cond:
-            try:
-                assert len(val) == self.allowed_len
-            except AssertionError:
-                raise InvalidLengthError
-
-        return val
-
-    def _serialize(self, value, attr, obj, **kwargs):
-        if value is None:
-            return None
-        try:
-            return self._verifyData(value)
-        except AssertionError as e:
-            raise self.make_error("invalid")
-            logger.error(e)
-        except InvalidLengthError as e:
-            raise self.make_error("length")
-            logger.error(e)
-
-    def _deserialize(self, value, attr, data, **kwargs):
-        if value is None:
-            return None
-        try:
-            return self._verifyData(value)
-        except AssertionError as e:
-            raise self.make_error("invalid")
-            logger.error(e)
-        except InvalidLengthError as e:
-            raise self.make_error("length")
-            logger.error(e)
+    Args:
+        obj1 (Any): Object 1 (old object)
+        obj2 (Any): Object 2 (new object)
+        ignore_keys (List): List of keys that needs to be ignored during diff calculation
+    """
+    return list(diff(obj1, obj2, ignore=ignore_keys))
 
 
-class LicensePlateMoveSchema(BaseMASchema):
-    license_plate_id = LpMoveField(required=True, allowed_len=25)
-    dest_location_id = LpMoveField(required=True, allowed_len=11)
-    user_id = LpMoveField(required=False, allowed_len=17)
+def revert_diff(diff, obj2):
+    """Revert to original obj from new obj using the diff (supports only Dicts for now)
 
-    @post_load
-    def add_required_alt(self, data, *args, **kwargs):
-        if data:
-            if isinstance(data["license_plate_id"], str):
-                tmp: [LicensePlate | None] = LicensePlate.query.filter_by(
-                    lp_id=data["license_plate_id"]
-                ).first()
-                if not tmp:
-                    raise DataValidationError(
-                        MSG.LICENSE_PLATE_NOT_FOUND,
-                        MSG.LICENSE_PLATE_NOT_FOUND
-                    )
-                data["license_plate_id"] = tmp.id
-            if isinstance(data["dest_location_id"], str):
-                tmp: [Location | None] = Location.query.filter(
-                    Location.beacon_id == data["dest_location_id"]
-                )
-                if not tmp:
-                    raise DataValidationError(
-                        MSG.LOCATION_NOT_FOUND,
-                        MSG.LOCATION_NOT_FOUND
-                    )
-                data["dest_location_id"] = tmp.id
-            if "user_id" in data:  # user_id is an optional field
-                if isinstance(data["user_id"], str):
-                    tmp: [User | None] = User.query.filter_by(
-                        person_id=data["user_id"]
-                    ).first()
-                    if not tmp:
-                        raise DataValidationError(
-                            MSG.USER_NOT_FOUND, MSG.LICENSE_PLATE_NOT_FOUND
-                        )
-                    data["user_id"] = tmp.id
-        return data
+    Args:
+        diff (list): Diff sequence
+        obj2 (Any): New object
+    """
+    return revert(diff, obj2)
 
 
 def gen_pre_report(report, location_id):
