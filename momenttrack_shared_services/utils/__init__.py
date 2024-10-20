@@ -20,7 +20,7 @@ from marshmallow import (
 )
 import marshmallow.fields as ma
 from marshmallow import fields
-from opensearchpy.exceptions import NotFoundError
+from opensearchpy.exceptions import ConflictError
 from sqlalchemy.exc import IntegrityError
 from loguru import logger
 
@@ -143,6 +143,7 @@ def DBErrorHandler(e):
     if foreign_key_error is not None:
         raise DataValidationError(message=foreign_key_error, errors=None)
 
+    raise e
 
 def _parse_ma_error(exc, data, **kwargs):
     # format & custom the messages
@@ -311,42 +312,102 @@ def create_or_update_doc(client, obj, schema, data, index, type=None):
 def update_prd_order_totals(client, loc_id, order_id, deduct=False, loc=None):
     # find production_order_total obj and update
     from opensearchpy.exceptions import NotFoundError
+    from opensearchpy import OpenSearch
+    import time
+
+    client: OpenSearch = client
+
+    def update_with_retry(
+            doc_id,
+            index,
+            initial_backoff=1.25,
+            max_retries=30
+        ):
+        """
+        Attempt at thread-safe approach to updating line-items totals.
+        Uses 'backoff retry' policy following a optimistic concurrency control
+        pattern, to allow worker processes retry updates if the document has
+        already been updated by another process since it last fetched the
+        document. Rather than blindly updating the document.
+        """
+        backoff = initial_backoff
+        attempt = 0
+        while True:
+            try:
+                doc = client.get(index=index, id=doc_id)
+                if deduct:
+                    update = {
+                        "total_items": int(doc['_source']["total_items"]) - 1
+                    }
+                else:
+                    update = {
+                        "total_items": int(doc['_source']["total_items"]) + 1
+                    }
+                client.update(
+                    index=index,
+                    id=doc_id,
+                    body={'doc': update},
+                    if_seq_no=doc["_seq_no"],
+                    if_primary_term=doc["_primary_term"]
+                )
+                logger.info(f"update happened on the {attempt+1} attempt")
+                return 0
+            except Exception as e:
+                attempt += 1
+                logger.error(f"Update failed (attempt {attempt + 1}): {e}")
+                time.sleep(backoff)  # Wait before retrying
+                backoff = min(backoff * 2, 30)  # backoff delay <= 30s
+                print(backoff)
+                if max_retries and attempt >= max_retries:
+                    logger.error("Max retries reached. Giving up.")
+                    raise Exception("Max retries reached. Giving up.")
 
     try:
-        res = client.get(
-            index="production_order_lineitems_totals_alias", id=f"{order_id}_{loc_id}"
-        )
-        res = {"_id": res["_id"], **res["_source"]}
-        if deduct:
-            update = {"total_items": int(res["total_items"]) - 1}
-        else:
-            update = {"total_items": int(res["total_items"]) + 1}
-        client.update(
-            index="production_order_lineitems_totals_alias",
-            body={"doc": update},
-            id=res["_id"],
-        )
-    except NotFoundError:
-        logger.error(
-            f"Order total doesn't yet exist for the location "
-            f"with id {loc_id} in order {order_id}"
-        )
+        """
+        !! DISCLAIMER 🔽🔽
+        Done this way to prevent race-condition issues
+        with multiple worker processes trying to index the
+        same document at the same time. 
+
+        NOTE: The `Opensearch.create()` method is used to ensure
+        that the lineitems_total document is created exactly once
+        if it doesn't already exist by any one worker process.
+
+        This `create()` method raises a conflictError if the 
+        document already exists (unlike the index() 
+        method which would just reindex it anyways). We can latch
+        onto that error to take other actions, which in the 
+        case below is to perform an update rather 
+        than a re-index which is what would happen if 
+        we did a lookup->then `index()` approach.
+        """
         new_sum = {
             "name": loc["name"],
             "total_items": 1,
             "production_order_id": order_id,
             "location_id": loc_id,
             "organization_id": loc["organization_id"],
-            "created_at": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "created_at": datetime.datetime.utcnow().
+            strftime("%Y-%m-%d %H:%M:%S.%f")
         }
-        client.index(
+        client.create(
             index="production_order_lineitems_totals_alias",
             body=new_sum,
             id=f"{order_id}_{loc_id}",
         )
+    except ConflictError:
+        res = client.get(
+            "production_order_lineitems_totals_alias",
+            id=f"{order_id}_{loc_id}"
+        )
+        update_with_retry(
+            f"{order_id}_{loc_id}",
+            "production_order_lineitems_totals_alias"
+        )
 
 
 def update_line_items(client, lp_id, obj):
+
     from opensearchpy.helpers.update_by_query import UpdateByQuery
 
     ubq = (

@@ -3,7 +3,8 @@ from momenttrack_shared_models import (
     LicensePlateStatusEnum,
     LicensePlate,
     Location,
-    ActivityTypeEnum
+    ActivityTypeEnum,
+    ProductionOrderLineitem
 )
 from momenttrack_shared_models.core.schemas import (
     LocationSchema,
@@ -17,6 +18,7 @@ from momenttrack_shared_services.utils.activity import ActivityService
 from momenttrack_shared_services.utils import (
     DBErrorHandler,
     saobj_as_dict,
+    DataValidationError,
     get_diff,
     update_prd_order_totals
 )
@@ -91,6 +93,13 @@ class Create:
 
         session.commit()
         if production_order_id:
+            # check if lineitem has been made with same lp_id
+            existing_item = ProductionOrderLineitem.query.filter(
+                ProductionOrderLineitem.license_plate_id == license_plate.id,
+                ProductionOrderLineitem.production_order_id == production_order_id
+            ).first()
+            if existing_item:
+                DBErrorHandler(Exception('lineitem with lp_id already exists'))
             po_lineitem = ProductionOrderLineitemSchema().load(
                 {
                     "production_order_id": production_order_id,
@@ -158,17 +167,16 @@ class Create:
                         index="production_order_lineitems_alias",
                         body=obj, id=po_lineitem.id
                     )
-                if len(check) == 0:
-                    update_prd_order_totals(
-                        client,
-                        license_plate.location_id,
-                        po_lineitem.production_order_id,
-                        loc=LocationSchema().dump(
-                            Location.get_by_id_and_org(
-                                license_plate.location_id, self.org_id
-                            )
-                        ),
-                    )
+                update_prd_order_totals(
+                    client,
+                    license_plate.location_id,
+                    po_lineitem.production_order_id,
+                    loc=LocationSchema().dump(
+                        Location.get_by_id_and_org(
+                            license_plate.location_id, self.org_id
+                        )
+                    ),
+                )
             except Exception as e:
                 DBErrorHandler(e)
 
