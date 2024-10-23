@@ -93,7 +93,6 @@ class Create:
 
         session.commit()
         if production_order_id:
-            # check if lineitem has been made with same lp_id
             existing_item = ProductionOrderLineitem.query.filter(
                 ProductionOrderLineitem.license_plate_id == license_plate.id,
                 ProductionOrderLineitem.production_order_id == production_order_id
@@ -223,26 +222,26 @@ class Create:
 
             if self.comment:
                 activity_service = ActivityService(
+                    self.db, self.client,
                     self.org_id, self.user_id, self.headers
                 )
                 activity_service.log(
                     "license_plate",
                     license_plate.id,
                     ActivityTypeEnum.COMMENT,
-                    message=comment,
+                    message=self.comment,
                 )
                 try:
                     self.db.writer_session.commit()
                 except SQLAlchemyError as e:
                     DBErrorHandler(e)
-
         except Exception as e:  # pylint:disable=W0718
             self.db.writer_session.flush(license_plate)
             self.db.writer_session.rollback()
             if lp_indexes:
                 self.rollback_documents("lps", lp_indexes)
-            print(e)
             logger.error(
                 "OPENSEARCH [ERROR] An error occurred while trying to "
                 f"index license_plate with id {license_plate.id}"
             )
+            logger.error(e)

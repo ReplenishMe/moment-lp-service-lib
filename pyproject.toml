@@ -7,7 +7,7 @@ name = "momenttrack_shared_services"
 authors = [
     {name = "Curiouspaul", email = "paulcurious7@gmail.com"},
 ]
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
     'sqlalchemy',
     'loguru',

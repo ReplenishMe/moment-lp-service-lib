@@ -60,7 +60,7 @@ class LicensePlateServiceAgent:
             user_id,
             client,
             headers,
-            comment=None
+            comment=comment
         )
         lp = _create.execute(
             license_plate=lp,

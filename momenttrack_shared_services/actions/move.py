@@ -252,11 +252,14 @@ class Move:
                     body=line_graph_item
                 )
 
-            line_item = ProductionOrderLineitem.query.filter_by(
+            orders = ProductionOrderLineitem.query.with_entities(
+                ProductionOrderLineitem.production_order_id
+            ).filter_by(
                 license_plate_id=lp.id
-            ).first()
+            ).all()
+            print(orders)
 
-            if line_item:
+            if orders:
                 dest_loc = LocationSchema().dump(
                     Location.get(lp_move.dest_location_id)
                 )
@@ -269,19 +272,20 @@ class Move:
                 }
                 update_line_items(self.client, lp.id, update)
                 # update production_order total summary
-                update_prd_order_totals(
-                    self.client,
-                    lp_move.dest_location_id,
-                    line_item.production_order_id,
-                    loc=dest_loc
-                )
-                update_prd_order_totals(
-                    self.client,
-                    lp_move.src_location_id,
-                    line_item.production_order_id,
-                    deduct=True,
-                    loc=prev_loc,
-                )
+                for order in orders:
+                    update_prd_order_totals(
+                        self.client,
+                        lp_move.dest_location_id,
+                        order.production_order_id,
+                        loc=dest_loc
+                    )
+                    update_prd_order_totals(
+                        self.client,
+                        lp_move.src_location_id,
+                        order.production_order_id,
+                        deduct=True,
+                        loc=prev_loc,
+                    )
         except Exception as e:
             logger.exception(e)
         return resp

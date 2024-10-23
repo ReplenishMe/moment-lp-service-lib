@@ -367,7 +367,7 @@ def update_prd_order_totals(client, loc_id, order_id, deduct=False, loc=None):
         !! DISCLAIMER 🔽🔽
         Done this way to prevent race-condition issues
         with multiple worker processes trying to index the
-        same document at the same time. 
+        same document at the same time.
 
         NOTE: The `Opensearch.create()` method is used to ensure
         that the lineitems_total document is created exactly once
