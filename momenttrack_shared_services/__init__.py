@@ -52,6 +52,7 @@ class LicensePlateServiceAgent:
         production_order_id=None,
         comment=None
     ):
+        print("HELLO WORLD!! CREATE OPERATION IS HAPPENING!!")
         db = self.db
         client = self.os_client
         _create = Create(
