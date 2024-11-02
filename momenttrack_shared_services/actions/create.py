@@ -237,8 +237,8 @@ class Create:
                     except SQLAlchemyError as e:
                         DBErrorHandler(e)
             except Exception as e:  # pylint:disable=W0718
-                self.db.writer_session.flush(license_plate)
-                self.db.writer_session.rollback()
+                sess.flush(license_plate)
+                sess.rollback()
                 if lp_indexes:
                     self.rollback_documents("lps", lp_indexes)
                 logger.error(

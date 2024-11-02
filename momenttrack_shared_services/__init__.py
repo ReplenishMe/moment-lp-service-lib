@@ -19,9 +19,14 @@ from .utils import DBErrorHandler
 
 class LicensePlateServiceAgent:
     def __init__(self, db_config, os_client=None):
+        self.db = db
         self.os_client = os_client
         self.db_config = db_config
-        self.db = db.init_db(db_config)
+        self.pool_size = db_config.pop('SQLALCHEMY_DB_POOL_SIZE', None)
+        self.db = db.init_db(
+            db_config,
+            pool_size=self.pool_size
+        )
 
     def move(
         self, lp,
@@ -64,7 +69,6 @@ class LicensePlateServiceAgent:
         )
         lp = _create.execute(
             license_plate=lp,
-            session=session,
             production_order_id=production_order_id
         )
         return lp

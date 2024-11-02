@@ -59,101 +59,101 @@ class Move:
         Move the location of a license plate & also record that transaction
         """
         db = self.db
-        # # Validation start ##
-        lp = LicensePlate.get_by_id(self.lp, session=db.writer_session())
-        dest_location_id = self.dest_location_id
-        logger.debug(
-            f"MOVE: lp={lp.id} from={lp.location_id} to={dest_location_id}"
-        )
-        # verify license plate
-        if lp is None or lp.status in [
-            LicensePlateStatusEnum.RETIRED,
-            LicensePlateStatusEnum.DELETED,
-        ]:
-            raise HttpError(code=404, message=MSG.LICENSE_PLATE_NOT_FOUND)
+        with db.writer_session() as sess:
+            # # Validation start ##
+            lp = LicensePlate.get_by_id(self.lp, session=sess)
+            dest_location_id = self.dest_location_id
+            logger.debug(
+                f"MOVE: lp={lp.id} from={lp.location_id} to={dest_location_id}"
+            )
+            # verify license plate
+            if lp is None or lp.status in [
+                LicensePlateStatusEnum.RETIRED,
+                LicensePlateStatusEnum.DELETED,
+            ]:
+                raise HttpError(code=404, message=MSG.LICENSE_PLATE_NOT_FOUND)
 
-        # verify if src & dest locs are same
-        if lp.location_id == dest_location_id:
-            raise HttpError(
-                code=400,
-                message=invalid_move_msg,
+            # verify if src & dest locs are same
+            if lp.location_id == dest_location_id:
+                raise HttpError(
+                    code=400,
+                    message=invalid_move_msg,
+                )
+
+            # verify if dest location exists
+            loc = Location.get_by_id_and_org(dest_location_id, self.org_id)
+            if loc is None or loc.is_inactive:
+                raise HttpError(code=404, message=MSG.LOCATION_NOT_FOUND)
+            # # Validation end ##
+
+            # create an activity
+            activity_id = self.activity_service.log(
+                "license_plate",
+                lp.id,
+                ActivityTypeEnum.LICENSE_PLATE_MOVE,
+                current_org_id=self.org_id,
+                current_user_id=self.user_id,
             )
 
-        # verify if dest location exists
-        loc = Location.get_by_id_and_org(dest_location_id, self.org_id)
-        if loc is None or loc.is_inactive:
-            raise HttpError(code=404, message=MSG.LOCATION_NOT_FOUND)
-        # # Validation end ##
+            # Create move trx, first
+            lp_move = LicensePlateMove(
+                license_plate_id=lp.id,
+                product_id=lp.product_id,
+                organization_id=self.org_id,
+                src_location_id=lp.location_id,
+                dest_location_id=dest_location_id,
+                user_id=self.user_id,
+                activity_id=activity_id,
+                created_at=datetime.datetime.utcnow(),
+                product=lp.product,
+                license_plate=lp
+                # move_type=LicensePlateMoveTypeEnum.TRANSFER,
+            )
+            sess.add(lp_move)
 
-        # create an activity
-        activity_id = self.activity_service.log(
-            "license_plate",
-            lp.id,
-            ActivityTypeEnum.LICENSE_PLATE_MOVE,
-            current_org_id=self.org_id,
-            current_user_id=self.user_id,
-        )
-
-        # Create move trx, first
-        lp_move = LicensePlateMove(
-            license_plate_id=lp.id,
-            product_id=lp.product_id,
-            organization_id=self.org_id,
-            src_location_id=lp.location_id,
-            dest_location_id=dest_location_id,
-            user_id=self.user_id,
-            activity_id=activity_id,
-            created_at=datetime.datetime.utcnow(),
-            product=lp.product,
-            license_plate=lp
-            # move_type=LicensePlateMoveTypeEnum.TRANSFER,
-        )
-        db.writer_session.add(lp_move)
-
-        prev_lp_move = (
-            LicensePlateMove.query.with_session(db.writer_session())
-            .options(lazyload(LicensePlateMove.user))
-            .options(lazyload(LicensePlateMove.product))
-            .options(lazyload(LicensePlateMove.license_plate))
-            .filter_by(license_plate_id=lp.id, dest_location_id=lp.location_id)
-            .order_by(LicensePlateMove.created_at.desc())
-            .first()
-        )
-        lp_move.created_at = datetime.datetime.utcnow()
-        if prev_lp_move:
-            prev_lp_move.left_at = lp_move.created_at
-
-            # # update log in OS
-            try:
-                logger.info(
-                    "OPENSEARCH: ATTEMPTING TO UPDATE\
-                         LPMOVE LOG LEFT_AT"
+            prev_lp_move = (
+                LicensePlateMove.query.with_session(db.writer_session())
+                .options(lazyload(LicensePlateMove.user))
+                .options(lazyload(LicensePlateMove.product))
+                .options(lazyload(LicensePlateMove.license_plate))
+                .filter_by(
+                    license_plate_id=lp.id,
+                    dest_location_id=lp.location_id
                 )
-                create_or_update_doc(
-                    client,
-                    prev_lp_move,
-                    LicensePlateMoveSchema(),
-                    {"doc": {"left_at": lp_move.created_at}},
-                    "lp_move_alias",
-                )
-            except Exception as e:
-                msg = "OPENSEARCH: AN ERROR OCCURRED WHILE \
-                    ATTEMPTING TO UPDATE LPMOVE LOG LEFT_AT"
-                logger.error(msg)
-                logger.error(e)
+                .order_by(LicensePlateMove.created_at.desc())
+                .first()
+            )
+            lp_move.created_at = datetime.datetime.utcnow()
+            if prev_lp_move:
+                prev_lp_move.left_at = lp_move.created_at
 
-        # move to dest location
-        lp.location_id = dest_location_id
+                # # update log in OS
+                try:
+                    logger.info(
+                        "OPENSEARCH: ATTEMPTING TO UPDATE\
+                            LPMOVE LOG LEFT_AT"
+                    )
+                    create_or_update_doc(
+                        client,
+                        prev_lp_move,
+                        LicensePlateMoveSchema(),
+                        {"doc": {"left_at": lp_move.created_at}},
+                        "lp_move_alias",
+                    )
+                except Exception as e:
+                    msg = "OPENSEARCH: AN ERROR OCCURRED WHILE \
+                        ATTEMPTING TO UPDATE LPMOVE LOG LEFT_AT"
+                    logger.error(msg)
+                    logger.error(e)
 
-        # flush changes from this transaction
-        db.writer_session.flush()
-        db.writer_session.commit()
-        resp = self.log_move(lp=lp, lp_move=lp_move)
-        return resp
-        # return {
-        #     'lp_id': lp.lp_id,
-        #     'loc': lp.location_id
-        # }
+            # move to dest location
+            lp.location_id = dest_location_id
+
+            # flush changes from this transaction
+            sess.flush()
+            sess.commit()
+            resp = self.log_move(lp=lp, lp_move=lp_move)
+            return resp
 
     def log_move(self, lp, lp_move):
         resp = LicensePlateMoveLogsSchema().dump(lp_move)
