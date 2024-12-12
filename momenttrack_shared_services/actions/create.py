@@ -56,6 +56,11 @@ class Create:
             license_plate.organization_id = self.org_id
             license_plate.status = LicensePlateStatusEnum.CREATED
 
+            # add design imaging redirect
+            # TODO: remove this hardcoded portion and make this more extensible
+            if self.org_id == 54:
+                license_plate.redirect_url = 'https://www.sentrelproducts.com/'
+
             # default location
             if license_plate.location_id is None:
                 logger.debug(
