@@ -1,3 +1,4 @@
+import requests
 from loguru import logger
 from momenttrack_shared_models import (
     LicensePlateStatusEnum,
@@ -163,16 +164,24 @@ class Create:
 
                     if len(check) != 0:
                         logger.info("update Attempting made many times ")
-                        client.index(
+                        result= client.index(
                             index="production_order_lineitems_alias",
                             body=obj, id=check[0]["_id"]
                         )
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_created.json",
+                            json={"index": "production_order_lineitems_alias", 
+                            "lp_id": obj["lp_id"], "result": result})
                     else:
                         logger.info("Attempting a made for first time ")
                         client.index(
                             index="production_order_lineitems_alias",
                             body=obj, id=po_lineitem.id
                         )
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_created.json",
+                            json={"index": "production_order_lineitems_alias", 
+                            "lp_id": obj["lp_id"], "result": result})
                     update_prd_order_totals(
                         client,
                         license_plate.location_id,

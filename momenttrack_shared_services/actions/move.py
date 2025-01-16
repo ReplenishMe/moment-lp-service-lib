@@ -1,5 +1,5 @@
 import datetime
-
+import requests
 from loguru import logger
 from sqlalchemy.orm import lazyload
 from momenttrack_shared_models import (
@@ -166,9 +166,13 @@ class Move:
                         license_plate_move document..
                     """
                 )
-            self.client.index(
+            result =self.client.index(
                     index="lp_move_alias", body=resp, id=lp_move.id
                 )
+            requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "lp_move", 
+                            "lp_id": lp_move.license_plate_id, "result": result})
             lp_move_doc_id = lp_move.id
         except Exception as e:
             logger.error(
@@ -270,7 +274,11 @@ class Move:
                     "location_id": lp_move.dest_location_id,
                     "location": dest_loc
                 }
-                update_line_items(self.client, lp.id, update)
+                result =update_line_items(self.client, lp.id, update)
+                requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": result})
                 # update production_order total summary
                 for order in orders:
                     update_prd_order_totals(
