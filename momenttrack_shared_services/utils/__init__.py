@@ -4,6 +4,7 @@ from dictdiffer import (
 )
 import statistics
 import re
+import os
 
 from momenttrack_shared_models import (
     LicensePlateMove,
@@ -20,6 +21,10 @@ from marshmallow import (
 )
 import marshmallow.fields as ma
 from marshmallow import fields
+from opensearchpy import (
+    OpenSearch,
+    RequestsHttpConnection
+)
 from opensearchpy.exceptions import ConflictError
 from sqlalchemy.exc import IntegrityError
 from loguru import logger
@@ -426,3 +431,40 @@ def update_line_items(client, lp_id, obj):
     )
     response = ubq.execute()
     return response
+
+
+def update_lp_moves(client, lp_id, obj):
+    from opensearchpy.helpers.update_by_query import (
+        UpdateByQuery,
+        UpdateByQueryResponse
+    )
+
+    ubq = (
+        UpdateByQuery(using=client, index="lp_move_alias")
+        .query("match", license_plate_id=lp_id)
+        .script(
+            source="""
+            for (entry in params.updates.entrySet())
+            { 
+                ctx._source[entry.getKey()] = entry.getValue(); 
+            }
+        """,
+            lang="painless",
+            params={"updates": obj},
+        )
+    )
+    response = ubq.execute()
+    return response
+
+
+def setup_opensearch():
+    auth_h = (os.getenv("OPENSEARCH_USER"), os.getenv("OPENSEARCH_PASS"))
+    client = OpenSearch(
+        hosts=[{"host": os.getenv("OPENSEARCH_HOST"), "port": 443}],
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection,
+        http_auth=auth_h,
+        timeout=300,
+    )
+    return client

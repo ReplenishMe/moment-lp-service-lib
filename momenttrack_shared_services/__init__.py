@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .actions.move import Move
 from .actions.create import Create
+from .actions.edit import _edit
 from .utils.activity import ActivityService
 from .utils import DBErrorHandler
 
@@ -22,7 +23,7 @@ class LicensePlateServiceAgent:
         self.db = db
         self.os_client = os_client
         self.db_config = db_config
-        self.pool_size = db_config.pop('SQLALCHEMY_DB_POOL_SIZE', None)
+        self.pool_size = db_config.pop('SQLALCHEMY_DB_POOL_SIZE', 20)
         self.db = db.init_db(
             db_config,
             pool_size=self.pool_size
@@ -104,3 +105,6 @@ class LicensePlateServiceAgent:
             DBErrorHandler(e)
         finally:
             db.writer_session.close()
+
+    def edit(self, lp_obj, org_id):
+        return _edit(self.db, lp_obj, org_id, self.os_client)
