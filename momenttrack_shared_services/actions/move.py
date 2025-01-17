@@ -169,10 +169,22 @@ class Move:
             result =self.client.index(
                     index="lp_move_alias", body=resp, id=lp_move.id
                 )
-            requests.patch(
-                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
-                            json={"index": "lp_move", 
+            try:
+                    requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_created_1.json",
+                            json={"index": "line_items", 
                             "lp_id": lp_move.license_plate_id, "result": result})
+                except Exception as e:
+                    try:
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_created_1.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": str(result)})
+                    except Exception as f:
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_created_1.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": str(f)})
             lp_move_doc_id = lp_move.id
         except Exception as e:
             logger.error(
@@ -275,10 +287,22 @@ class Move:
                     "location": dest_loc
                 }
                 result =update_line_items(self.client, lp.id, update)
-                requests.patch(
+                try:
+                    requests.patch(
                             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
                             json={"index": "line_items", 
                             "lp_id": lp_move.license_plate_id, "result": result})
+                except Exception as e:
+                    try:
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": str(result)})
+                    except Exception as f:
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": str(f)})
                 # update production_order total summary
                 for order in orders:
                     update_prd_order_totals(
