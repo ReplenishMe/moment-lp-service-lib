@@ -425,4 +425,8 @@ def update_line_items(client, lp_id, obj):
         )
     )
     response = ubq.execute()
+    print("---------------------------------------------")
+    print(response)
+    print(dir(response))
+    print("-------------------------------")
     return response
