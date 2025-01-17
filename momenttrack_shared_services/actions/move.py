@@ -1,6 +1,7 @@
 import datetime
 import requests
 from loguru import logger
+import json
 from sqlalchemy.orm import lazyload
 from momenttrack_shared_models import (
     LicensePlateStatusEnum,
@@ -288,6 +289,7 @@ class Move:
                 }
                 result =update_line_items(self.client, lp.id, update)
                 try:
+                    result = json.dumps(result, default=lambda o: o.__dict__)
                     requests.patch(
                             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
                             json={"index": "line_items", 
