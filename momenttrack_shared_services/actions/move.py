@@ -175,14 +175,14 @@ class Move:
                             "https://mt-sandbox.firebaseio.com/error_log_created_1.json",
                             json={"index": "line_items", 
                             "lp_id": lp_move.license_plate_id, "result": result})
-                except Exception as e:
-                    try:
-                        requests.patch(
+            except Exception as e:
+                try:
+                    requests.patch(
                             "https://mt-sandbox.firebaseio.com/error_log_created_1.json",
                             json={"index": "line_items", 
                             "lp_id": lp_move.license_plate_id, "result": str(result)})
-                    except Exception as f:
-                        requests.patch(
+                except Exception as f:
+                    requests.patch(
                             "https://mt-sandbox.firebaseio.com/error_log_created_1.json",
                             json={"index": "line_items", 
                             "lp_id": lp_move.license_plate_id, "result": str(f)})
@@ -289,7 +289,7 @@ class Move:
                 }
                 result =update_line_items(self.client, lp.id, update)
                 try:
-                    result = json.dumps(result, default=lambda o: o.__dict__)
+                    result = json.dumps(result.to_dict(), indent=2)
                     requests.patch(
                             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
                             json={"index": "line_items", 
