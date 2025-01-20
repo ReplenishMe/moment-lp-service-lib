@@ -288,24 +288,24 @@ class Move:
                     "location": dest_loc
                 }
                 result =update_line_items(self.client, lp.id, update)
-                # try:
-                #     result = json.dumps(result.to_dict(), indent=2)
-                #     requests.patch(
-                #             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
-                #             json={"index": "line_items", 
-                #             "lp_id": lp_move.license_plate_id, "result": result})
-                # except Exception as e:
-                #     try:
-                #         requests.patch(
-                #             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
-                #             json={"index": "line_items", 
-                #             "lp_id": lp_move.license_plate_id, "result": str(result)})
-                #     except Exception as f:
-                #         requests.patch(
-                #             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
-                #             json={"index": "line_items", 
-                #             "lp_id": lp_move.license_plate_id, "result": str(f)})
-                # # update production_order total summary
+                try:
+                    result = json.dumps(result.to_dict(), indent=2)
+                    requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": result})
+                except Exception as e:
+                    try:
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": str(result)})
+                    except Exception as f:
+                        requests.patch(
+                            "https://mt-sandbox.firebaseio.com/error_log_moved.json",
+                            json={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": str(f)})
+                # update production_order total summary
                 for order in orders:
                     update_prd_order_totals(
                         self.client,

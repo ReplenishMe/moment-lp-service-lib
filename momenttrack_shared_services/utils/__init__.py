@@ -425,13 +425,4 @@ def update_line_items(client, lp_id, obj):
         )
     )
     response = ubq.execute()
-    print("---------------------------------------------")
-    print(response)
-    try:
-        print(response.to_dict())
-    except Exception:
-        print("No to_dict method")
-    print(dir(response))
-    print(type(response))
-    print("-------------------------------")
     return response
