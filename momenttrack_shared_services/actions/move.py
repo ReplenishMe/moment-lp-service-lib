@@ -289,11 +289,13 @@ class Move:
                 }
                 result =update_line_items(self.client, lp.id, update)
                 try:
+                    import os
                     result = json.dumps(result.to_dict(), indent=2)
+                    data ={"index": "line_items", 
+                            "lp_id": lp_move.license_plate_id, "result": result}
                     requests.patch(
                             "https://mt-sandbox.firebaseio.com/error_log_moved.json",
-                            json={"index": "line_items", 
-                            "lp_id": lp_move.license_plate_id, "result": result})
+                            json={os.urandom(4).hex():data})
                 except Exception as e:
                     try:
                         requests.patch(
