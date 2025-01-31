@@ -359,11 +359,11 @@ def update_prd_order_totals(client, loc_id, order_id, deduct=False, loc=None):
                         if_seq_no=doc["_seq_no"],
                         if_primary_term=doc["_primary_term"]
                     )
-                    if r.to_dict()["failures"] == []:
+                    if r["_shards"]["failed"] == 0:
                         break
                     else:
                         retry -= 1
-                        obj = r.to_dict()
+                        obj = r
                 if retry == 0:
                     requests.patch(
                         "https://mt-sandbox.firebaseio.com/error_log1.json",

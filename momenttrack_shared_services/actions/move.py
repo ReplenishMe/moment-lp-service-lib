@@ -175,11 +175,11 @@ class Move:
                 r = self.client.index(
                         index="lp_move_alias", body=resp, id=lp_move.id
                     )
-                if r.to_dict()["failures"] == []:
+                if r["_shards"]["failed"] == 0:
                     break
                 else:
                     retry -= 1
-                    obj = r.to_dict()
+                    obj = r
             if retry == 0:
                 requests.patch(
                         "https://mt-sandbox.firebaseio.com/error_log1.json",
