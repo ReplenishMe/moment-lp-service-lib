@@ -1,4 +1,6 @@
 import datetime
+import requests
+import os
 
 from loguru import logger
 from sqlalchemy.orm import lazyload
@@ -166,9 +168,22 @@ class Move:
                         license_plate_move document..
                     """
                 )
-            self.client.index(
-                    index="lp_move_alias", body=resp, id=lp_move.id
-                )
+            retry = 3
+            obj = None
+            for iteration in range(retry):
+
+                r = self.client.index(
+                        index="lp_move_alias", body=resp, id=lp_move.id
+                    )
+                if r["_shards"]["failed"] == 0:
+                    break
+                else:
+                    retry -= 1
+                    obj = r
+            if retry == 0:
+                requests.patch(
+                        "https://mt-sandbox.firebaseio.com/error_log1.json",
+                        json={os.urandom(4).hex(): obj})
             lp_move_doc_id = lp_move.id
         except Exception as e:
             logger.error(
