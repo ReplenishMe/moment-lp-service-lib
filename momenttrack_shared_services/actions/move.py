@@ -74,6 +74,7 @@ class Move:
         with db.writer_session() as sess:
             # # Validation start ##
             lp = LicensePlate.get_by_id(self.lp, session=sess)
+            source_loc = lp.location_id
             dest_location_id = self.dest_location_id
             logger.debug(
                 f"MOVE: lp={lp.id} from={lp.location_id} to={dest_location_id}"
@@ -164,7 +165,7 @@ class Move:
             # flush changes from this transaction
             sess.flush()
             sess.commit()
-            lp_move(sess)
+            move_lp(source_loc, lp.location_id, sess)
             resp = self.log_move(lp=lp, lp_move=lp_move)
             return resp
 
