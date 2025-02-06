@@ -33,6 +33,15 @@ from momenttrack_shared_services.utils import (
 )
 
 
+def move_lp(src_id, dest_id, session, count=1):
+    src_loc = Location.get_by_id(src_id, session=session)
+    dest_loc = Location.get_by_id(dest_id, session=session)
+    if src_loc.lp_qty > 0:
+        src_loc.lp_qty -= count
+        dest_loc.lp_qty += count
+    session.commit()
+
+
 class Move:
     def __init__(
         self,
@@ -60,10 +69,12 @@ class Move:
         """
         Move the location of a license plate & also record that transaction
         """
+
         db = self.db
         with db.writer_session() as sess:
             # # Validation start ##
             lp = LicensePlate.get_by_id(self.lp, session=sess)
+            source_loc = lp.location_id
             dest_location_id = self.dest_location_id
             logger.debug(
                 f"MOVE: lp={lp.id} from={lp.location_id} to={dest_location_id}"
@@ -154,6 +165,7 @@ class Move:
             # flush changes from this transaction
             sess.flush()
             sess.commit()
+            move_lp(source_loc, lp.location_id, sess)
             resp = self.log_move(lp=lp, lp_move=lp_move)
             return resp
 

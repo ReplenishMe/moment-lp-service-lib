@@ -24,6 +24,11 @@ from momenttrack_shared_services.utils import (
 )
 
 
+def add_lp(location, session=None, count=1):
+    location.lp_qty += count
+    session.commit()
+
+
 class Create:
     def __init__(self, db, org_id, user_id, client, headers, comment=None):
         self.db = db
@@ -95,7 +100,9 @@ class Create:
                 )
             else:
                 # otherwise, add
+                loc = Location.get_system_location(self.org_id, session=sess)
                 sess.add(license_plate)
+                add_lp(loc, sess, license_plate.quantity)
 
             sess.commit()
             if production_order_id:
