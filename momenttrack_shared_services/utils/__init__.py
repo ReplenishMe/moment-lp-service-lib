@@ -9,27 +9,22 @@ import os
 from momenttrack_shared_models import (
     LicensePlateMove,
     LicensePlate,
-    Product,
     User,
-    Location,
-    Vendor
+    Location
 )
+from momenttrack_shared_models.core.schemas import \
+    LicensePlateMoveLogsSchema
 from momenttrack_shared_models.core.extensions import db
-from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
-from marshmallow import (
-    pre_load, post_dump, pre_dump, Schema, post_load
-)
-import marshmallow.fields as ma
-from marshmallow import fields
 from opensearchpy import (
     OpenSearch,
     RequestsHttpConnection
 )
-from opensearchpy.exceptions import ConflictError
+from opensearchpy.exceptions import (
+    ConflictError,
+    NotFoundError
+)
 from sqlalchemy.exc import IntegrityError
 from loguru import logger
-
-import momenttrack_shared_services.messages as MSG
 
 
 class DataValidationError(Exception):

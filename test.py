@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from momenttrack_shared_services import LicensePlateServiceAgent
 from momenttrack_shared_services.utils import setup_opensearch
 
-load_dotenv()
+# load_dotenv()
 
 
 # WRITER_DB_URI = os.getenv("DATABASE_URL_WRITER", "sqlite:///dev.db")
@@ -20,9 +20,9 @@ load_dotenv()
 # open_client = setup_opensearch()
 # agent = LicensePlateServiceAgent(conf, os_client=open_client)
 
-# # lp_move = agent.move(
-# #     2202, 358, 4, {}, 2
-# # )
+# lp_move = agent.move(
+#     2202, 1086, 4, {}, 2
+# )
 # lp = {
 #     'product_id': 2653,
 #     'id': 2202

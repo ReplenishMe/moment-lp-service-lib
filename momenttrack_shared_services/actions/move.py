@@ -1,5 +1,7 @@
+import os
 import datetime
 
+import requests
 from loguru import logger
 from sqlalchemy.orm import lazyload
 from momenttrack_shared_models import (
@@ -8,19 +10,23 @@ from momenttrack_shared_models import (
     Location,
     ActivityTypeEnum,
     ProductionOrderLineitem,
-    LicensePlateMove
+    LicensePlateMove,
+    Container,
+    ContainerMove
 )
 from momenttrack_shared_models.core.schemas import (
     LicensePlateMoveSchema,
-    LicensePlateMoveLogsSchema,
     LocationSchema,
     LicensePlateSchema,
-    LicensePlateOpenSearchSchema
+    LicensePlateOpenSearchSchema,
+    LicensePlateMoveOpenSearchSchema,
+    ContainerMoveSchema
 )
 
 from momenttrack_shared_services.messages import \
      LICENSE_PLATE_MOVE_NOT_PERMITTED_WITH_SAME_DESTINATION as invalid_move_msg
 from momenttrack_shared_services.utils.activity import ActivityService
+from momenttrack_shared_services.utils.location import LocationService
 from momenttrack_shared_services import messages as MSG
 from momenttrack_shared_services.utils import (
     HttpError,
@@ -35,15 +41,15 @@ class Move:
     def __init__(
         self,
         db,
-        lp,
-        org_id,
-        dest_location_id,
-        user_id,
-        headers,
+        move_item_id: int,
+        org_id: int,
+        dest_location_id: int,
+        user_id: int,
+        headers: dict,
         client,
-        loglocation=None
+        loglocation: bool = None
     ):
-        self.lp = lp
+        self.move_item_id = move_item_id
         self.client = client
         self.org_id = org_id
         self.loglocation = loglocation
@@ -51,7 +57,13 @@ class Move:
         self.headers = headers
         self.user_id = user_id
         self.db = db
-        self.activity_service = ActivityService(db, client, org_id, user_id, headers)
+        self.activity_service = ActivityService(
+            db, client,
+            org_id, user_id,
+            headers
+        )
+        self.is_container = False
+        self.move_item = self.get_lp_or_container()
 
     def execute(self):
         client = self.client
@@ -60,232 +72,323 @@ class Move:
         """
         db = self.db
         with db.writer_session() as sess:
+            mov_item = self.move_item
+
             # # Validation start ##
-            lp = LicensePlate.get_by_id(self.lp, session=sess)
-            dest_location_id = self.dest_location_id
             logger.debug(
-                f"MOVE: lp={lp.id} from={lp.location_id} to={dest_location_id}"
+                f"MOVE: object={mov_item.id} from={mov_item.location_id}"
+                f"to={self.dest_location_id}"
             )
-            # verify license plate
-            if lp is None or lp.status in [
-                LicensePlateStatusEnum.RETIRED,
-                LicensePlateStatusEnum.DELETED,
-            ]:
-                raise HttpError(code=404, message=MSG.LICENSE_PLATE_NOT_FOUND)
+
+            # lp checks
+            is_container = isinstance(mov_item, Container)
+
+            if not is_container:
+                # verify license plate
+                if mov_item is None or mov_item.status in [
+                    LicensePlateStatusEnum.RETIRED,
+                    LicensePlateStatusEnum.DELETED,
+                ]:
+                    raise HttpError(
+                        code=404,
+                        message=MSG.LICENSE_PLATE_NOT_FOUND
+                    )
+
+                activityType = ActivityTypeEnum.LICENSE_PLATE_MOVE
+                activityModel = "LicensePlate"
+                moveModel = LicensePlateMove
+
+                Move = moveModel(
+                    license_plate_id=mov_item.id,
+                    product_id=mov_item.product_id,
+                    organization_id=self.org_id,
+                    src_location_id=mov_item.location_id,
+                    dest_location_id=self.dest_location_id,
+                    user_id=self.user_id,
+                    created_at=datetime.datetime.utcnow(),
+                    product=mov_item.product,
+                    license_plate=mov_item
+                )
+                prev_move = (
+                    moveModel.query.with_session(db.writer_session())
+                    .options(lazyload(LicensePlateMove.user))
+                    .options(lazyload(LicensePlateMove.product))
+                    .options(lazyload(LicensePlateMove.license_plate))
+                    .filter_by(
+                        license_plate_id=mov_item.id,
+                        dest_location_id=self.dest_location_id
+                    )
+                    .order_by(LicensePlateMove.created_at.desc())
+                    .first()
+                )
+            else:
+                moveModel = ContainerMove
+                activityType = ActivityTypeEnum.CONTAINER_MOVE
+                activityModel = "Container"
+                Move = moveModel(
+                    container_id=mov_item.id,
+                    organization_id=self.org_id,
+                    src_location_id=mov_item.location_id,
+                    dest_location_id=self.dest_location_id,
+                    user_id=self.user_id,
+                    created_at=datetime.datetime.utcnow()
+                )
+                prev_move = (
+                    moveModel.query.with_session(db.writer_session())
+                    .options(lazyload(ContainerMove.user))
+                    .filter_by(
+                        container_id=mov_item.id,
+                        dest_location_id=self.dest_location_id
+                    )
+                    .order_by(ContainerMove.created_at.desc())
+                    .first()
+                )
 
             # verify if src & dest locs are same
-            if lp.location_id == dest_location_id:
+            if mov_item.location_id == self.dest_location_id:
                 raise HttpError(
                     code=400,
-                    message=invalid_move_msg,
+                    message=invalid_move_msg
                 )
 
             # verify if dest location exists
-            loc = Location.get_by_id_and_org(dest_location_id, self.org_id)
+            loc = Location.get_by_id_and_org(
+                self.dest_location_id,
+                self.org_id
+            )
             if loc is None or loc.is_inactive:
                 raise HttpError(code=404, message=MSG.LOCATION_NOT_FOUND)
             # # Validation end ##
 
             # create an activity
             activity_id = self.activity_service.log(
-                "license_plate",
-                lp.id,
-                ActivityTypeEnum.LICENSE_PLATE_MOVE,
+                activityModel,
+                mov_item.id,
+                activityType,
                 current_org_id=self.org_id,
                 current_user_id=self.user_id,
             )
 
             # Create move trx, first
-            lp_move = LicensePlateMove(
-                license_plate_id=lp.id,
-                product_id=lp.product_id,
-                organization_id=self.org_id,
-                src_location_id=lp.location_id,
-                dest_location_id=dest_location_id,
-                user_id=self.user_id,
-                activity_id=activity_id,
-                created_at=datetime.datetime.utcnow(),
-                product=lp.product,
-                license_plate=lp
-                # move_type=LicensePlateMoveTypeEnum.TRANSFER,
-            )
-            sess.add(lp_move)
+            Move.activity_id = activity_id
+            sess.add(Move)
 
-            prev_lp_move = (
-                LicensePlateMove.query.with_session(db.writer_session())
-                .options(lazyload(LicensePlateMove.user))
-                .options(lazyload(LicensePlateMove.product))
-                .options(lazyload(LicensePlateMove.license_plate))
-                .filter_by(
-                    license_plate_id=lp.id,
-                    dest_location_id=lp.location_id
-                )
-                .order_by(LicensePlateMove.created_at.desc())
-                .first()
-            )
-            lp_move.created_at = datetime.datetime.utcnow()
-            if prev_lp_move:
-                prev_lp_move.left_at = lp_move.created_at
+            if prev_move:
+                prev_move.left_at = Move.created_at
 
-                # # update log in OS
+                # update log in OS
                 try:
-                    logger.info(
-                        "OPENSEARCH: ATTEMPTING TO UPDATE\
-                            LPMOVE LOG LEFT_AT"
-                    )
-                    create_or_update_doc(
-                        client,
-                        prev_lp_move,
-                        LicensePlateMoveSchema(),
-                        {"doc": {"left_at": lp_move.created_at}},
-                        "lp_move_alias",
-                    )
+                    logger.info("OPENSEARCH: ATTEMPTING TO UPDATE MOVE LOG LEFT_AT")  # noqa: E501
+                    if not is_container:
+                        create_or_update_doc(
+                            client,
+                            prev_move,
+                            LicensePlateMoveSchema(),
+                            {"doc": {"left_at": Move.created_at}},
+                            "lp_move_alias",
+                        )
+                    else:
+                        create_or_update_doc(
+                            client,
+                            prev_move,
+                            ContainerMoveSchema(),
+                            {"doc": {"left_at": Move.created_at}},
+                            "container_move_alias"
+                        )
                 except Exception as e:
-                    msg = "OPENSEARCH: AN ERROR OCCURRED WHILE \
-                        ATTEMPTING TO UPDATE LPMOVE LOG LEFT_AT"
-                    logger.error(msg)
+                    logger.error(
+                        "OPENSEARCH: AN ERROR OCCURRED WHILE "
+                        " ATTEMPTING TO UPDATE LPMOVE LOG LEFT_AT"
+                    )
                     logger.error(e)
 
             # move to dest location
-            lp.location_id = dest_location_id
+            mov_item.location_id = self.dest_location_id
 
             # flush changes from this transaction
-            sess.flush()
+            # db.writer_session.flush()
             sess.commit()
-            resp = self.log_move(lp=lp, lp_move=lp_move)
+            resp = self.log_move(
+                entity=mov_item,
+                move=Move,
+                open_client=client,
+                is_container=is_container
+            )
             return resp
 
-    def log_move(self, lp, lp_move):
-        resp = LicensePlateMoveLogsSchema().dump(lp_move)
+    def log_move(
+        self,
+        entity: [LicensePlate | Container],
+        move: [LicensePlateMove | ContainerMove],
+        open_client,
+        is_container: bool = False
+    ):
+        if not is_container:
+            schema = LicensePlateMoveOpenSearchSchema()
+            moveIndex = 'lp_move_alias'
+        else:
+            schema = ContainerMoveSchema()
+            moveIndex = 'container_move_alias'
 
-        lp_move_doc_id = None
+        resp = schema.dump(move)
         try:
             logger.info(
-                    """
-                        OPENSEARCH [INFO]::Attempting to index
-                        license_plate_move document..
-                    """
+                """
+                    OPENSEARCH [INFO]::Attempting to index
+                    license_plate_move document..
+                """
+            )
+            retry = 3
+            obj = None
+            for i in range(retry):
+                r = open_client.index(
+                    index=moveIndex, body=resp, id=move.id
                 )
-            self.client.index(
-                    index="lp_move_alias", body=resp, id=lp_move.id
+                if r["_shards"]["failed"] == 0:
+                    break
+                else:
+                    retry -= 1
+                    obj = r
+            if retry == 0:
+                requests.patch(
+                    "https://mt-sandbox.firebaseio.com/error_log1.json",
+                    json={os.urandom(4).hex(): obj}
                 )
-            lp_move_doc_id = lp_move.id
         except Exception as e:
             logger.error(
                     f"""
                     OPENSEARCH [ERROR] An error occurred while trying to
-                     index license_plate with id {lp_move.id}
+                     index license_plate with id {move.id}
                     """
                 )
             DBErrorHandler(e)
 
-        logger.info(f"move record has been indexed \
-            for lp_move id : {lp_move.id} ")
+        logger.info(f"move record has been indexed for move id : {move.id} ")
 
-        try:
-            # reindex lp
-            res = create_or_update_doc(
-                self.client,
-                lp,
-                LicensePlateSchema(),
-                {"doc": LicensePlateOpenSearchSchema().dump(lp)},
-                "lp_alias",
+        if not is_container:
+            LocationService.move_lp(
+                move.src_location_id,
+                move.dest_location_id,
+                self.db,
+                count=entity.quantity
             )
-            logger.info(
-                f"lp record has been re-indexed for \
-                    lp_move id : {lp_move_doc_id}"
-            )
+            try:
+                # reindex lp
+                res = create_or_update_doc(
+                    open_client,
+                    entity,
+                    LicensePlateSchema(),
+                    {"doc": LicensePlateOpenSearchSchema().dump(entity)},
+                    "lp_alias",
+                )
+                logger.info(f"record has been re-indexed for move id : {move.id} ")
 
-            # update line-graph-data
-            query = {
-                "query": {
-                    "bool": {
-                        "must": [
-                            {
-                                "match": {
-                                    "date_key": str(lp_move.created_at)[:10]
-                                }
-                            },
-                            {
-                                "match": {
-                                    "location_id": lp_move.dest_location_id
-                                }
-                            },
-                            {
-                                "match": {
-                                    "part_number": resp["product"]["part_number"]
-                                }
-                            },
-                        ]
+                # update line-graph-data
+                query = {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {
+                                    "match": {
+                                        "date_key": str(move.created_at)[:10]
+                                    }
+                                },
+                                {
+                                    "match": {
+                                        "location_id": move.dest_location_id
+                                    }
+                                },
+                                {
+                                    "match": {
+                                        "part_number": resp["product"]["part_number"]
+                                    }
+                                },
+                            ]
+                        }
                     }
                 }
-            }
 
-            res = self.client.search(index="line_graph_data", body=query)
-            res = [
-                {
-                    "_id": hit["_id"],
-                    **hit["_source"]
-                } for hit in res["hits"]["hits"]
-            ]
-            if res:
-                line_graph_item = {
-                    "date": lp_move.created_at,
-                    "location_id": lp_move.dest_location_id,
-                    "quantity": int(res[0]["quantity"]) + 1,
-                }
-                self.client.update(
-                    index="line_graph_data",
-                    body={"doc": line_graph_item},
-                    id=res[0]["_id"],
-                )
-            else:
-                line_graph_item = {
-                    "date": lp_move.created_at,
-                    "location_id": lp_move.dest_location_id,
-                    "quantity": 1,
-                    "date_key": str(lp_move.created_at)[:10],
-                    "part_number": resp["product"]["part_number"],
-                }
-                self.client.index(
-                    index="line_graph_data",
-                    body=line_graph_item
-                )
+                res = open_client.search(index="line_graph_data", body=query)
+                res = [
+                    {
+                        "_id": hit["_id"],
+                        **hit["_source"]
+                    } for hit in res["hits"]["hits"]
+                ]
+                if res:
+                    line_graph_item = {
+                        "date": move.created_at,
+                        "location_id": move.dest_location_id,
+                        "quantity": int(res[0]["quantity"]) + entity.quantity,
+                    }
+                    open_client.update(
+                        index="line_graph_data",
+                        body={"doc": line_graph_item},
+                        id=res[0]["_id"],
+                    )
+                else:
+                    line_graph_item = {
+                        "date": move.created_at,
+                        "location_id": move.dest_location_id,
+                        "quantity": 1,
+                        "date_key": str(move.created_at)[:10],
+                        "part_number": resp["product"]["part_number"],
+                    }
+                    open_client.index(
+                        index="line_graph_data",
+                        body=line_graph_item
+                    )
+                line_item = ProductionOrderLineitem.query.filter_by(
+                    license_plate_id=entity.id
+                ).first()
 
-            orders = ProductionOrderLineitem.query.with_entities(
-                ProductionOrderLineitem.production_order_id
-            ).filter_by(
-                license_plate_id=lp.id
-            ).all()
-            print(orders)
-
-            if orders:
-                dest_loc = LocationSchema().dump(
-                    Location.get(lp_move.dest_location_id)
-                )
-                prev_loc = LocationSchema().dump(Location.get(
-                    lp_move.src_location_id
-                ))
-                update = {
-                    "location_id": lp_move.dest_location_id,
-                    "location": dest_loc
-                }
-                update_line_items(self.client, lp.id, update)
-                # update production_order total summary
-                for order in orders:
+                if line_item:
+                    dest_loc = LocationSchema().dump(
+                        Location.get(move.dest_location_id)
+                    )
+                    prev_loc = LocationSchema().dump(Location.get(
+                        move.src_location_id
+                    ))
+                    update = {
+                        "location_id": move.dest_location_id,
+                        "location": dest_loc
+                    }
+                    update_line_items(open_client, entity.id, update)
+                    # update production_order total summary
                     update_prd_order_totals(
-                        self.client,
-                        lp_move.dest_location_id,
-                        order.production_order_id,
+                        open_client,
+                        move.dest_location_id,
+                        line_item.production_order_id,
                         loc=dest_loc
                     )
                     update_prd_order_totals(
-                        self.client,
-                        lp_move.src_location_id,
-                        order.production_order_id,
+                        open_client,
+                        move.src_location_id,
+                        line_item.production_order_id,
                         deduct=True,
                         loc=prev_loc,
                     )
-        except Exception as e:
-            logger.exception(e)
+            except Exception as e:
+                DBErrorHandler(e)
         return resp
+
+    def get_lp_or_container(self):
+        db = self.db
+        obj: [LicensePlate | Container | None] = None
+
+        obj = LicensePlate.get_by_lp_id_or_id_and_org(
+            self.move_item_id, self.org_id, session=db.writer_session()
+        )
+        if not obj:
+            obj = db.writer_session.query(
+                Container
+            ).filter_by(container_id=self.move_item_id).first()
+        if not obj:
+            # check if its a container
+            raise HttpError(
+                MSG.LP_OR_CONTAINER_NOT_FOUND,
+                404
+            )
+
+        self.is_container = isinstance(obj, Container)
+        return obj
