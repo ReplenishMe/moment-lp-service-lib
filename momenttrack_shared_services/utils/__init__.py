@@ -5,6 +5,7 @@ from dictdiffer import (
 import statistics
 import re
 import os
+import requests
 
 from momenttrack_shared_models import (
     LicensePlateMove,
@@ -343,13 +344,25 @@ def update_prd_order_totals(client, loc_id, order_id, deduct=False, loc=None):
                     update = {
                         "total_items": int(doc['_source']["total_items"]) + 1
                     }
-                client.update(
-                    index=index,
-                    id=doc_id,
-                    body={'doc': update},
-                    if_seq_no=doc["_seq_no"],
-                    if_primary_term=doc["_primary_term"]
-                )
+                retry = 3
+                obj = None
+                for i in range(retry):
+                    r = client.update(
+                        index=index,
+                        id=doc_id,
+                        body={'doc': update},
+                        if_seq_no=doc["_seq_no"],
+                        if_primary_term=doc["_primary_term"]
+                    )
+                    if r["_shards"]["failed"] == 0:
+                        break
+                    else:
+                        retry -= 1
+                        obj = r
+                if retry == 0:
+                    requests.patch(
+                        "https://mt-sandbox.firebaseio.com/error_log1.json",
+                        json={os.urandom(4).hex(): obj})
                 logger.info(f"update happened on the {attempt+1} attempt")
                 return 0
             except Exception as e:
@@ -424,7 +437,21 @@ def update_line_items(client, lp_id, obj):
             params={"updates": obj},
         )
     )
-    response = ubq.execute()
+    response = None
+    retry = 3
+    obj = None
+    for i in range(retry):
+        r = response = ubq.execute()
+        response = r
+        if r.to_dict()["failures"] == []:
+            break
+        else:
+            retry -= 1
+            obj = r.to_dict()
+    if retry == 0:
+        requests.patch(
+            "https://mt-sandbox.firebaseio.com/error_log1.json",
+            json={os.urandom(4).hex(): obj})
     return response
 
 
@@ -448,7 +475,21 @@ def update_lp_moves(client, lp_id, obj):
             params={"updates": obj},
         )
     )
-    response = ubq.execute()
+    response = None
+    retry = 3
+    obj = None
+    for i in range(retry):
+        r = response = ubq.execute()
+        response = r
+        if r.to_dict()["failures"] == []:
+            break
+        else:
+            retry -= 1
+            obj = r.to_dict()
+    if retry == 0:
+        requests.patch(
+            "https://mt-sandbox.firebaseio.com/error_log1.json",
+            json={os.urandom(4).hex(): obj})
     return response
 
 
