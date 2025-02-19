@@ -294,7 +294,6 @@ def append_line_graph_data(data, client):
 
 def create_or_update_doc(client, obj, schema, data, index, type=None):
     try:
-        client.get(index=index, id=obj.id)
         ans = client.update(index=index, body=data, id=obj.id)
     except NotFoundError:
         if type == "location":

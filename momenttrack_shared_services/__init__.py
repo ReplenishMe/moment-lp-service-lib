@@ -30,7 +30,7 @@ class LicensePlateServiceAgent:
         )
 
     def move(
-        self, lp,
+        self, move_item_id,
         dest_location_id, org_id,
         headers, user_id,
         loglocation=None
@@ -39,7 +39,7 @@ class LicensePlateServiceAgent:
         client = self.os_client
         _move = Move(
             db,
-            lp,
+            move_item_id,
             org_id,
             dest_location_id,
             user_id,

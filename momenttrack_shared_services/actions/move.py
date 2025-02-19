@@ -52,7 +52,7 @@ class Move:
     def __init__(
         self,
         db,
-        move_item_id: int,
+        move_item_id: [int | str],
         org_id: int,
         dest_location_id: int,
         user_id: int,
@@ -79,7 +79,7 @@ class Move:
     def execute(self):
         client = self.client
         """
-        Move the location of a license plate & also record that transaction
+        Move the location of a 'movable' & also record that transaction
         """
 
         db = self.db
@@ -185,7 +185,14 @@ class Move:
             Move.activity_id = activity_id
             sess.add(Move)
 
+            # add items back in session due to
+            # activity_service.log() commit()
+            sess.add(mov_item)
+
             if prev_move:
+                # add items back in session due to
+                # activity_service.log() commit()
+                sess.add(prev_move)
                 prev_move.left_at = Move.created_at
 
                 # update log in OS
@@ -392,9 +399,10 @@ class Move:
             self.move_item_id, self.org_id, session=db.writer_session()
         )
         if not obj:
-            obj = db.writer_session.query(
-                Container
-            ).filter_by(container_id=self.move_item_id).first()
+            obj = Container.get_by_id_or_by_container_id(
+                self.move_item_id, self.org_id,
+                session=db.writer_session()
+            )
         if not obj:
             # check if its a container
             raise HttpError(
