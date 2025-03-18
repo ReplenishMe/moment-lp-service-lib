@@ -107,7 +107,7 @@ class Move:
                     )
 
                 activityType = ActivityTypeEnum.LICENSE_PLATE_MOVE
-                activityModel = "LicensePlate"
+                activityModel = "license_plate"
                 moveModel = LicensePlateMove
 
                 Move = moveModel(
