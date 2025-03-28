@@ -128,7 +128,7 @@ class Move:
                     .options(lazyload(LicensePlateMove.license_plate))
                     .filter_by(
                         license_plate_id=mov_item.id,
-                        dest_location_id=self.dest_location_id
+                        dest_location_id=mov_item.location_id
                     )
                     .order_by(LicensePlateMove.created_at.desc())
                     .first()
@@ -150,7 +150,7 @@ class Move:
                     .options(lazyload(ContainerMove.user))
                     .filter_by(
                         container_id=mov_item.id,
-                        dest_location_id=self.dest_location_id
+                        dest_location_id=mov_item.location_id
                     )
                     .order_by(ContainerMove.created_at.desc())
                     .first()
