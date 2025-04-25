@@ -6,7 +6,7 @@ import statistics
 import re
 import os
 import requests
-
+from sqlalchemy.orm import selectinload
 from momenttrack_shared_models import (
     LicensePlateMove,
     LicensePlate,
@@ -298,8 +298,18 @@ def create_or_update_doc(client, obj, schema, data, index, type=None):
     except NotFoundError:
         if type == "location":
             lpmoves = LicensePlateMoveLogsSchema(many=True).dump(
-                LicensePlateMove.query.filter_by(dest_location_id=obj.id).all()
+                LicensePlateMove.query.filter_by(
+                    dest_location_id=obj.id
+                    ).options(
+                        selectinload(
+                            LicensePlateMove.license_plate
+                            ).selectinload(
+                                LicensePlateMove.product
+                                )).all()
             )
+            # lpmoves = LicensePlateMoveLogsSchema(many=True).dump(
+            #     LicensePlateMove.query.filter_by(dest_location_id=obj.id).all()
+            # )
             rep = {"logs": lpmoves}
             rep = gen_pre_report(rep, obj.id)
             rep = append_line_graph_data(rep, client)
