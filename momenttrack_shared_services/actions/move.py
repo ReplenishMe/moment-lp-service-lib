@@ -359,7 +359,7 @@ class Move:
                     )
                 line_item = ProductionOrderLineitem.query.filter_by(
                     license_plate_id=entity.id
-                ).first()
+                ).order_by(ProductionOrderLineitem.created_at.desc()).first()
 
                 if line_item:
                     dest_loc = LocationSchema().dump(
