@@ -251,6 +251,7 @@ class Move:
             moveIndex = 'container_move_alias'
 
         resp = schema.dump(move)
+        print(resp)
         try:
             logger.info(
                 """
@@ -297,7 +298,7 @@ class Move:
                 res = create_or_update_doc(
                     open_client,
                     entity,
-                    LicensePlateSchema(),
+                    LicensePlateOpenSearchSchema(),
                     {"doc": LicensePlateOpenSearchSchema().dump(entity)},
                     "lp_alias",
                 )
@@ -389,6 +390,7 @@ class Move:
                         loc=prev_loc,
                     )
             except Exception as e:
+                logger.error(e)
                 DBErrorHandler(e)
         return resp
 
