@@ -75,36 +75,33 @@ class LicensePlateServiceAgent:
         return lp
 
     def comment(self, lp_id, message, org_id, user_id, headers):
-        org = Organization.get(org_id)
-        license_plate = LicensePlate.get_by_id_and_org(lp_id, org)
-        if (
-            license_plate is None
-            or license_plate.status == LicensePlateStatusEnum.DELETED
-        ):
-            raise Exception(MSG.LICENSE_PLATE_NOT_FOUND)
-        license_plate_id = license_plate.id
-        schema = UserCommentsSchema()
-        activity_service = ActivityService(
-            self.db, self.os_client, org.id, user_id, headers
-        )
-        activity_service.log(
-            "license_plate",
-            license_plate_id,
-            ActivityTypeEnum.COMMENT,
-            message=message,
-        )
-        try:
-            db.writer_session.commit()
-            resp = schema.dump(license_plate)
-            return resp
-        except KeyError as ke:
-            raise Exception(f"Missing key: {str(ke)}")
-        except ValueError as ve:
-            raise Exception(f"Invalid value: {str(ve)}")
-        except SQLAlchemyError as e:
-            DBErrorHandler(e)
-        finally:
-            db.writer_session.close()
+        with db.writer_session() as sess:
+            org = Organization.get(org_id)
+            license_plate = LicensePlate.get_by_id_and_org(lp_id, org)
+            if (
+                license_plate is None
+                or license_plate.status == LicensePlateStatusEnum.DELETED
+            ):
+                raise Exception(MSG.LICENSE_PLATE_NOT_FOUND)
+            license_plate_id = license_plate.id
+            activity_service = ActivityService(
+                self.db, self.os_client, org.id, user_id, headers
+            )
+            activity_id = activity_service.log(
+                "license_plate",
+                license_plate_id,
+                ActivityTypeEnum.COMMENT,
+                sess,
+                message=message
+            )
+            try:
+                sess.commit()
+            except KeyError as ke:
+                raise Exception(f"Missing key: {str(ke)}")
+            except ValueError as ve:
+                raise Exception(f"Invalid value: {str(ve)}")
+            except SQLAlchemyError as e:
+                DBErrorHandler(e)
 
     def edit(self, lp_obj, org_id):
         return _edit(self.db, lp_obj, org_id, self.os_client)

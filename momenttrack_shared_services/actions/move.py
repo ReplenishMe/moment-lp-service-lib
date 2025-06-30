@@ -177,6 +177,7 @@ class Move:
                 activityModel,
                 mov_item.id,
                 activityType,
+                sess,
                 current_org_id=self.org_id,
                 current_user_id=self.user_id,
             )

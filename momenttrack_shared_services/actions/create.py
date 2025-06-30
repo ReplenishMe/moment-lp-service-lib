@@ -200,6 +200,7 @@ class Create:
                 "license_plate",
                 license_plate.id,
                 ActivityTypeEnum.LICENSE_PLATE_MADEIT,
+                sess,
                 message=str(message),
                 current_org_id=self.org_id,
                 current_user_id=self.user_id,
@@ -244,6 +245,7 @@ class Create:
                         "license_plate",
                         license_plate.id,
                         ActivityTypeEnum.COMMENT,
+                        sess,
                         message=self.comment,
                     )
                     try:

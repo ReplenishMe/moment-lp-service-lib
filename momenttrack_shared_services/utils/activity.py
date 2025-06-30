@@ -8,7 +8,10 @@ from momenttrack_shared_models import (
     User,
     UserStatusEnum,
 )
-from momenttrack_shared_services.utils import DataValidationError
+from momenttrack_shared_services.utils import (
+    DataValidationError,
+    DBErrorHandler
+)
 
 
 class ActivityService:
@@ -93,7 +96,7 @@ class ActivityService:
 
         return logs
 
-    def log(self, model_name, model_id, activity_type, **kwargs):
+    def log(self, model_name, model_id, activity_type, sess, **kwargs):
         ip_address = self.headers.get("X-Forwarded-For", None)
         x_user_id = self.headers.get("X-Momenttrack-User", self.user_id)
 
@@ -120,13 +123,10 @@ class ActivityService:
             activity_type=activity_type,
             ip_address=ip_address,
         )
-        print(dir(activity))
+        sess.add(activity)
 
-        # index activity
         try:
-            self.db.writer_session.add(activity)
-            self.db.writer_session.commit()
-
+            sess.flush()
             data = {
                 "id": activity.id,
                 "user_id": activity.user_id,
@@ -139,8 +139,7 @@ class ActivityService:
             }
             self.client.index(index="activity", body=data)
         except Exception as e:
-            print(str(e))
-            raise e
+            DBErrorHandler(e)
 
         return activity.id
 
