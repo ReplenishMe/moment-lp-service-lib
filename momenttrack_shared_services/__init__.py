@@ -13,6 +13,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .actions.move import Move
 from .actions.create import Create
+from .actions.deduct import Deduct
+from .actions.split import Split
+from .actions.wrap import Wrap
+from .actions.cycle_count import CycleCount
 from .actions.edit import _edit
 from .utils.activity import ActivityService
 from .utils import DBErrorHandler
@@ -73,6 +77,73 @@ class LicensePlateServiceAgent:
             production_order_id=production_order_id
         )
         return lp
+
+    def deduct(
+        self, lp,
+        total_qty_to_deduct,
+        org_id, headers,
+        user_id,
+    ):
+        db = self.db
+        client = self.os_client
+        _deduct = Deduct(
+            db,
+            lp,
+            total_qty_to_deduct,
+            org_id,
+            user_id,
+            client,
+            headers
+        )
+        lp_deduct = _deduct.execute()
+        return lp_deduct
+    
+    def split(
+        self, lp,
+        split_distribution,
+    ):
+        db = self.db
+        client = self.os_client
+        _split = Split(
+            db,
+            lp,
+            split_distribution,
+            client
+        )
+        lp_split = _split.execute()
+        return lp_split
+    
+    def wrap(
+        self, payload,
+        org_id, headers,
+        user_id,
+    ):
+        db = self.db
+        client = self.os_client
+        _wrap = Wrap(
+            db,
+            payload,
+            org_id,
+            user_id,
+            headers,
+            client
+        )
+        lp_wrap = _wrap.execute()
+        return lp_wrap
+
+    def cycle_count(
+        self,
+        license_plate_id,
+    ):
+        db = self.db
+        client = self.os_client
+        _cycle_count = CycleCount(
+            db,
+            license_plate_id,
+            client
+        )
+        lp_cycle_count = _cycle_count.execute()
+        return lp_cycle_count
 
     def comment(self, lp_id, message, org_id, user_id, headers):
         with db.writer_session() as sess:
