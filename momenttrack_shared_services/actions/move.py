@@ -1,9 +1,5 @@
-import os
 import datetime
-import requests
-import os
 
-import requests
 from loguru import logger
 from sqlalchemy.orm import lazyload
 from momenttrack_shared_models import (
@@ -14,17 +10,19 @@ from momenttrack_shared_models import (
     ProductionOrderLineitem,
     LicensePlateMove,
     Container,
-    ContainerMove
+    ContainerMove,
+    ProductionOrder,
+    Product
 )
 from momenttrack_shared_models.core.schemas import (
     LicensePlateMoveSchema,
     LocationSchema,
-    LicensePlateSchema,
     LicensePlateOpenSearchSchema,
     LicensePlateMoveOpenSearchSchema,
     ContainerMoveSchema
 )
 
+from .create import Create
 from momenttrack_shared_services.messages import \
      LICENSE_PLATE_MOVE_NOT_PERMITTED_WITH_SAME_DESTINATION as invalid_move_msg
 from momenttrack_shared_services.utils.activity import ActivityService
@@ -259,22 +257,9 @@ class Move:
                     license_plate_move document..
                 """
             )
-            retry = 3
-            obj = None
-            for i in range(retry):
-                r = open_client.index(
-                    index=moveIndex, body=resp, id=move.id
-                )
-                if r["_shards"]["failed"] == 0:
-                    break
-                else:
-                    retry -= 1
-                    obj = r
-            if retry == 0:
-                requests.patch(
-                    "https://mt-sandbox.firebaseio.com/error_log1.json",
-                    json={os.urandom(4).hex(): obj}
-                )
+            r = open_client.index(
+                index=moveIndex, body=resp, id=move.id
+            )
         except Exception as e:
             logger.error(
                     f"""
@@ -396,7 +381,7 @@ class Move:
 
     def get_lp_or_container(self):
         db = self.db
-        obj: [LicensePlate | Container | None] = None
+        obj = None
 
         obj = LicensePlate.get_by_lp_id_or_id_and_org(
             self.move_item_id, self.org_id, session=db.writer_session()
@@ -408,10 +393,38 @@ class Move:
             )
         if not obj:
             # check if its a container
-            raise HttpError(
-                MSG.LP_OR_CONTAINER_NOT_FOUND,
-                404
+            print("License plate doesn't already exist creating ...")
+            cr = Create(
+                db,
+                self.org_id,
+                self.user_id,
+                self.client,
+                self.headers,
+                comment="Licenseplate made outside of proper made request"
             )
+            license_plate = LicensePlate(
+                lp_id=self.move_item_id,
+                product_id=Product.get_system_product(
+                    self.org_id
+                ).id,
+                quantity=1,
+                organization_id=self.org_id
+            )
+            try:
+                obj = cr.execute(
+                    license_plate,
+                    production_order_id=ProductionOrder.get_system_order(
+                        self.org_id,
+                        self.user_id
+                    ).id
+                )
+                # fetch obj afterwards
+                obj = LicensePlate.get_by_lp_id_or_id_and_org(
+                    self.move_item_id, self.org_id, session=db.writer_session()
+                )
+            except HttpError as e:
+                logger.error(e)
+                return
 
         self.is_container = isinstance(obj, Container)
         return obj
