@@ -13,7 +13,8 @@ from momenttrack_shared_models import (
 from momenttrack_shared_models.core.schemas import (
     LicensePlateSchema,
     LicensePlateOpenSearchSchema,
-    LicensePlateMove
+    LicensePlateMove,
+    LicensePlateReportSchema
 )
 
 from momenttrack_shared_services.utils import (
@@ -102,6 +103,14 @@ def _edit(db, lp_obj, org_id, client):
                     }
                 }
                 update_lp_moves(client, license_plate_id, update)
+
+            client.update(
+                index="everything_report_idx",
+                body={"doc": LicensePlateReportSchema(
+                    exclude=('last_interaction',)
+                ).dump(license_plate)},
+                id=license_plate_id
+            )
         except Exception as e:
             logger.error(
                 "OPENSEARCH [ERROR] An error occurred while trying to "

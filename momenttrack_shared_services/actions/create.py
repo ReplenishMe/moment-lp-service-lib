@@ -1,3 +1,5 @@
+import datetime
+
 from loguru import logger
 from momenttrack_shared_models import (
     LicensePlateStatusEnum,
@@ -8,10 +10,13 @@ from momenttrack_shared_models import (
 )
 from momenttrack_shared_models.core.schemas import (
     LocationSchema,
+    LicensePlateReportSchema,
     LicensePlateMadeItRequestSchema,
+    ProductionOrder,
     LicensePlateOpenSearchSchema,
     ProductionOrderLineitemSchema
 )
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from momenttrack_shared_services.utils.activity import ActivityService
@@ -19,6 +24,7 @@ from momenttrack_shared_services.utils import (
     DBErrorHandler,
     saobj_as_dict,
     DataValidationError,
+    HttpError,
     get_diff,
     update_prd_order_totals
 )
@@ -100,12 +106,26 @@ class Create:
                 )
             else:
                 # otherwise, add
+                lp = LicensePlate.query.filter_by(lp_id=license_plate.lp_id).first()
+                if lp:
+                    raise HttpError("Licenseplate value already belongs to another organization", 400)
+                sess.add(license_plate)
                 loc = Location.get_system_location(self.org_id, session=sess)
                 sess.add(license_plate)
                 add_lp(loc, sess, license_plate.quantity)
 
+            lp_report = LicensePlateReportSchema(
+                exclude=('last_interaction',)
+            ).dump(license_plate)
             sess.commit()
             if production_order_id:
+                # check if lineitem has been made with same lp_id
+                order = sess.scalar(
+                    select(ProductionOrder).where(
+                        ProductionOrder.id == production_order_id
+                    )
+                )
+                lp_report['production_order_id'] = order.docid
                 existing_item = ProductionOrderLineitem.query.filter(
                     ProductionOrderLineitem.license_plate_id == license_plate.id,
                     ProductionOrderLineitem.production_order_id == production_order_id
@@ -122,8 +142,7 @@ class Create:
                 po_lineitem.organization_id = self.org_id
                 try:
                     sess.add(po_lineitem)
-                    sess.commit()
-
+                    sess.flush()
                     obj = ProductionOrderLineitemSchema(
                         only=(
                             "id",
@@ -138,14 +157,12 @@ class Create:
                     obj["location_id"] = None
                     obj["location"] = None
                     obj["external_serial_number"] = None
-                    lp = LicensePlate.get(obj["license_plate_id"])
-                    if lp:
-                        obj["lp_id"] = lp.lp_id
-                        obj["location_id"] = lp.location_id
-                        obj["location"] = LocationSchema().dump(
-                            Location.get(lp.location_id)
-                        )
-                        obj["external_serial_number"] = lp.external_serial_number
+                    obj["lp_id"] = license_plate.lp_id
+                    obj["location_id"] = license_plate.location_id
+                    obj["location"] = LocationSchema().dump(
+                        Location.get(license_plate.location_id)
+                    )
+                    obj["external_serial_number"] = license_plate.external_serial_number
                     search_query = {
                         "query": {
                             "bool": {
@@ -155,14 +172,13 @@ class Create:
                                             "production_order_id": po_lineitem.production_order_id
                                         }
                                     },
-                                    {"match": {"license_plate_id": lp.id}},
+                                    {"match": {"license_plate_id": license_plate.id}},
                                 ]
                             }
                         }
                     }
                     resp = client.search(
-                        index="production_order_lineitems_alias",
-                        body=search_query
+                        index="production_order_lineitems_alias", body=search_query
                     )
                     logger.info("kk")
                     logger.info("Attempting a made a check", resp)
@@ -196,7 +212,7 @@ class Create:
                 message["production_order_id"] = production_order_id
 
             # Create a activity
-            self.activity_service.log(
+            activity = self.activity_service.log(
                 "license_plate",
                 license_plate.id,
                 ActivityTypeEnum.LICENSE_PLATE_MADEIT,
@@ -210,6 +226,12 @@ class Create:
 
             # log to opensearch
             self.log_made(license_plate)
+            lp_report['last_interaction'] = datetime.datetime.strftime(
+                activity.created_at,
+                "%Y-%m-%d %H:%M:%S.%f"
+            )
+            print(lp_report)
+            self.create_lp_report_entry(lp_report, client)
 
             return license_plate
 
@@ -262,3 +284,16 @@ class Create:
                     f"index license_plate with id {license_plate.id}"
                 )
                 logger.error(e)
+
+    def create_lp_report_entry(self, payload, client):
+        resp = client.index(
+            index="everything_report_idx",
+            body=payload,
+            id=payload['id']
+        )
+        shards = resp.get("_shards", {})
+        if shards.get("failed", 0) > 0:
+            raise Exception(
+                f"Warning: Operation succeeded, "
+                f"but {shards['failed']} shards failed."
+            )

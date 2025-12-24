@@ -141,7 +141,7 @@ class ActivityService:
         except Exception as e:
             DBErrorHandler(e)
 
-        return activity.id
+        return activity
 
     def log_change(self, model_name, model_id, field, old_value, new_value, message):
         activity_id = self.log(

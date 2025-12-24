@@ -173,7 +173,7 @@ class Move:
             # # Validation end ##
 
             # create an activity
-            activity_id = self.activity_service.log(
+            activity = self.activity_service.log(
                 activityModel,
                 mov_item.id,
                 activityType,
@@ -183,7 +183,7 @@ class Move:
             )
 
             # Create move trx, first
-            Move.activity_id = activity_id
+            Move.activity_id = activity.id
             sess.add(Move)
 
             # add items back in session due to
@@ -233,6 +233,12 @@ class Move:
                 move=Move,
                 open_client=client,
                 is_container=is_container
+            )
+            Move.update_associated_report(
+                datetime.datetime.strftime(
+                    activity.created_at,
+                    "%Y-%m-%d %H:%M:%S.%f"
+                )
             )
             return resp
 

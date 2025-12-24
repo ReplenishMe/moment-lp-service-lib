@@ -87,7 +87,7 @@ class LicensePlateServiceAgent:
             activity_service = ActivityService(
                 self.db, self.os_client, org.id, user_id, headers
             )
-            activity_id = activity_service.log(
+            activity_service.log(
                 "license_plate",
                 license_plate_id,
                 ActivityTypeEnum.COMMENT,
