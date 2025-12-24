@@ -105,11 +105,15 @@ class Create:
                     ignore_keys=["id", "created_at", "updated_at"]
                 )
             else:
-                # otherwise, add
+                # check if it belongs to some other org
                 lp = LicensePlate.query.filter_by(lp_id=license_plate.lp_id).first()
                 if lp:
-                    raise HttpError("Licenseplate value already belongs to another organization", 400)
-                sess.add(license_plate)
+                    DBErrorHandler(
+                        Exception(
+                            "Licenseplate value already belongs "
+                            "to another organization"
+                        )
+                    )
                 loc = Location.get_system_location(self.org_id, session=sess)
                 sess.add(license_plate)
                 add_lp(loc, sess, license_plate.quantity)
