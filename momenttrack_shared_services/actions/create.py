@@ -14,7 +14,8 @@ from momenttrack_shared_models.core.schemas import (
     LicensePlateMadeItRequestSchema,
     ProductionOrder,
     LicensePlateOpenSearchSchema,
-    ProductionOrderLineitemSchema
+    ProductionOrderLineitemSchema,
+    LineItemTotals
 )
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -97,7 +98,8 @@ class Create:
 
                 # If already exists, just update it.
                 for col, val in new_lp_dict.items():
-                    setattr(existing_lp, col, val)
+                    if not col in ['location_id']:
+                        setattr(existing_lp, col, val)
                 license_plate = existing_lp
                 message["converted"] = True
                 message["diff"] = get_diff(
@@ -200,15 +202,26 @@ class Create:
                             index="production_order_lineitems_alias",
                             body=obj, id=po_lineitem.id
                         )
+                    loc = Location.get_by_id_and_org(
+                        license_plate.location_id,
+                        self.org_id
+                    )
+                    upsert_payload = {
+                        'production_order_id': production_order_id,
+                        'location': loc
+                    }
+                    upsert = LineItemTotals.upsert(
+                        upsert_payload,
+                        session=sess
+                    )
+                    if upsert.is_new:
+                        sess.add(upsert.totals_object)
+                    sess.commit()
                     update_prd_order_totals(
                         client,
                         license_plate.location_id,
                         po_lineitem.production_order_id,
-                        loc=LocationSchema().dump(
-                            Location.get_by_id_and_org(
-                                license_plate.location_id, self.org_id
-                            )
-                        ),
+                        loc=LocationSchema().dump(loc)
                     )
                 except Exception as e:
                     DBErrorHandler(e)
@@ -234,7 +247,6 @@ class Create:
                 activity.created_at,
                 "%Y-%m-%d %H:%M:%S.%f"
             )
-            print(lp_report)
             self.create_lp_report_entry(lp_report, client)
 
             return license_plate

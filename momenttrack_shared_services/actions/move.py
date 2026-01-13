@@ -2,6 +2,7 @@ import datetime
 
 from loguru import logger
 from sqlalchemy.orm import lazyload
+from sqlalchemy import select, update
 from momenttrack_shared_models import (
     LicensePlateStatusEnum,
     LicensePlate,
@@ -11,7 +12,9 @@ from momenttrack_shared_models import (
     LicensePlateMove,
     Container,
     ContainerMove,
+    LineItemTotals,
     ProductionOrder,
+    ProductionOrderLineitem,
     Product
 )
 from momenttrack_shared_models.core.schemas import (
@@ -225,13 +228,45 @@ class Move:
 
             # flush changes from this transaction
             # db.writer_session.flush()
-            sess.commit()
+            sess.flush()
+            line_item = ProductionOrderLineitem.query.filter_by(
+                license_plate_id=mov_item.id
+            ).order_by(ProductionOrderLineitem.created_at.desc()).first()
+
             resp = self.log_move(
                 entity=mov_item,
                 move=Move,
                 open_client=client,
-                is_container=is_container
+                is_container=is_container,
+                line_item=line_item
             )
+            if line_item:
+                po_id = line_item.production_order_id
+                stmt = (
+                    update(LineItemTotals)
+                    .where(
+                        LineItemTotals.location_id == Move.src_location_id,
+                        LineItemTotals.production_order_id == po_id,
+                        LineItemTotals.total_items > 0
+                    )
+                    .values(total_items=LineItemTotals.total_items - 1)
+                )
+                sess.execute(stmt)
+                existing_row = LineItemTotals.get_by_location_and_order(
+                    Move.dest_location_id, po_id, session=sess
+                )
+                if existing_row:
+                    existing_row.total_items += 1
+                else:
+                    new_stat = LineItemTotals(
+                        name=loc.name, 
+                        production_order_id=po_id,
+                        location_id=Move.dest_location_id,
+                        organization_id=loc.organization_id,
+                        total_items=1
+                    )
+                    sess.add(new_stat)
+                sess.commit()
             Move.update_associated_report(
                 datetime.datetime.strftime(
                     activity.created_at,
@@ -242,10 +277,11 @@ class Move:
 
     def log_move(
         self,
-        entity: [LicensePlate | Container],
-        move: [LicensePlateMove | ContainerMove],
+        entity: LicensePlate | Container,
+        move: LicensePlateMove | ContainerMove,
         open_client,
-        is_container: bool = False
+        is_container: bool = False,
+        line_item: ProductionOrderLineitem = None
     ):
         if not is_container:
             schema = LicensePlateMoveOpenSearchSchema()
@@ -255,7 +291,6 @@ class Move:
             moveIndex = 'container_move_alias'
 
         resp = schema.dump(move)
-        print(resp)
         try:
             logger.info(
                 """
@@ -263,7 +298,7 @@ class Move:
                     license_plate_move document..
                 """
             )
-            r = open_client.index(
+            open_client.index(
                 index=moveIndex, body=resp, id=move.id
             )
         except Exception as e:
@@ -350,9 +385,6 @@ class Move:
                         index="line_graph_data",
                         body=line_graph_item
                     )
-                line_item = ProductionOrderLineitem.query.filter_by(
-                    license_plate_id=entity.id
-                ).order_by(ProductionOrderLineitem.created_at.desc()).first()
 
                 if line_item:
                     dest_loc = LocationSchema().dump(
