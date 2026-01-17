@@ -147,6 +147,7 @@ class Create:
                     session=sess
                 )
                 po_lineitem.organization_id = self.org_id
+                sess.add(po_lineitem)
                 # try:
                 #     sess.add(po_lineitem)
                 #     sess.flush()
