@@ -273,7 +273,11 @@ class Move:
                 ),
                 sess
             )
-            sess.commit()
+            try:
+                sess.commit()
+            except Exception as e:
+                sess.rollback()
+                raise e
             return resp
 
     def log_move(

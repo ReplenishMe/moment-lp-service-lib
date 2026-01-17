@@ -124,7 +124,7 @@ class Create:
             lp_report = LicensePlateReportSchema(
                 exclude=('last_interaction',)
             ).dump(license_plate)
-            sess.commit()
+            sess.flush()
             if production_order_id:
                 # check if lineitem has been made with same lp_id
                 order = sess.scalar(
@@ -227,15 +227,21 @@ class Create:
                 # except Exception as e:
                 #     DBErrorHandler(e)
                 try:
-                    loc = Location.get_by_id_and_org(license_plate.location_id, self.org_id)
+                    loc = Location.get_by_id_and_org(
+                        license_plate.location_id,
+                        self.org_id
+                    )
                     upsert_payload = {
                         'production_order_id': production_order_id,
                         'location': loc
                     }
-                    upsert = LineItemTotals.upsert(upsert_payload, session=sess)
+                    upsert = LineItemTotals.upsert(
+                        upsert_payload,
+                        session=sess
+                    )
                     if upsert.is_new:
                         sess.add(upsert.totals_object)
-                    sess.commit()
+                    sess.flush()
                 except Exception as e:
                     DBErrorHandler(e)
 
@@ -253,13 +259,17 @@ class Create:
             )
 
             # log to opensearch
-            self.log_made(license_plate)
+            self.log_made(license_plate, sess)
             lp_report['last_interaction'] = datetime.datetime.strftime(
                 activity.created_at,
                 "%Y-%m-%d %H:%M:%S.%f"
             )
             self.create_lp_report_entry(lp_report, session=sess)
-
+            try:
+                sess.commit()
+            except Exception as e:
+                sess.rollback()
+                raise e
             return license_plate
 
     def rollback_documents(self, index, doc_ids):
@@ -270,47 +280,46 @@ class Create:
             except Exception:  # pylint:disable=W0718
                 print(f"Document with ID {doc_id} not found in {index}")
 
-    def log_made(self, license_plate):
-        with self.db.writer_session() as sess:
-            try:
-                logger.info(
-                    "OPENSEARCH [INFO]::Attempting to index"
-                    " license_plate document.."
-                )
-                idx_schema = LicensePlateOpenSearchSchema()
-                doc = self.client.index(
-                    index="lp_alias",
-                    body=idx_schema.dump(license_plate),
-                    id=license_plate.id,
-                )
-                lp_indexes = doc['_id']
+    def log_made(self, license_plate, sess):
+        try:
+            # logger.info(
+            #     "OPENSEARCH [INFO]::Attempting to index"
+            #     " license_plate document.."
+            # )
+            # idx_schema = LicensePlateOpenSearchSchema()
+            # doc = self.client.index(
+            #     index="lp_alias",
+            #     body=idx_schema.dump(license_plate),
+            #     id=license_plate.id,
+            # )
+            # lp_indexes = doc['_id']
 
-                if self.comment:
-                    activity_service = ActivityService(
-                        self.db, self.client,
-                        self.org_id, self.user_id, self.headers
-                    )
-                    activity_service.log(
-                        "license_plate",
-                        license_plate.id,
-                        ActivityTypeEnum.COMMENT,
-                        sess,
-                        message=self.comment,
-                    )
-                    try:
-                        sess.commit()
-                    except SQLAlchemyError as e:
-                        DBErrorHandler(e)
-            except Exception as e:  # pylint:disable=W0718
-                sess.flush(license_plate)
-                sess.rollback()
-                if lp_indexes:
-                    self.rollback_documents("lps", lp_indexes)
-                logger.error(
-                    "OPENSEARCH [ERROR] An error occurred while trying to "
-                    f"index license_plate with id {license_plate.id}"
+            if self.comment:
+                activity_service = ActivityService(
+                    self.db, self.client,
+                    self.org_id, self.user_id, self.headers
                 )
-                logger.error(e)
+                activity_service.log(
+                    "license_plate",
+                    license_plate.id,
+                    ActivityTypeEnum.COMMENT,
+                    sess,
+                    message=self.comment,
+                )
+                try:
+                    sess.flush()
+                except SQLAlchemyError as e:
+                    DBErrorHandler(e)
+        except Exception as e:  # pylint:disable=W0718
+            # sess.flush(license_plate)
+            sess.rollback()
+            # if lp_indexes:
+            #     self.rollback_documents("lps", lp_indexes)
+            # logger.error(
+            #     "OPENSEARCH [ERROR] An error occurred while trying to "
+            #     f"index license_plate with id {license_plate.id}"
+            # )
+            raise e
 
     def create_lp_report_entry(self, payload, session):
         # resp = client.index(
