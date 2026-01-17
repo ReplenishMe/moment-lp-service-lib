@@ -259,20 +259,21 @@ class Move:
                     existing_row.total_items += 1
                 else:
                     new_stat = LineItemTotals(
-                        name=loc.name, 
+                        name=loc.name,
                         production_order_id=po_id,
                         location_id=Move.dest_location_id,
                         organization_id=loc.organization_id,
                         total_items=1
                     )
                     sess.add(new_stat)
-                sess.commit()
             Move.update_associated_report(
                 datetime.datetime.strftime(
                     activity.created_at,
                     "%Y-%m-%d %H:%M:%S.%f"
-                )
+                ),
+                sess
             )
+            sess.commit()
             return resp
 
     def log_move(
@@ -386,32 +387,32 @@ class Move:
                         body=line_graph_item
                     )
 
-                if line_item:
-                    dest_loc = LocationSchema().dump(
-                        Location.get(move.dest_location_id)
-                    )
-                    prev_loc = LocationSchema().dump(Location.get(
-                        move.src_location_id
-                    ))
-                    update = {
-                        "location_id": move.dest_location_id,
-                        "location": dest_loc
-                    }
-                    update_line_items(open_client, entity.id, update)
-                    # update production_order total summary
-                    update_prd_order_totals(
-                        open_client,
-                        move.dest_location_id,
-                        line_item.production_order_id,
-                        loc=dest_loc
-                    )
-                    update_prd_order_totals(
-                        open_client,
-                        move.src_location_id,
-                        line_item.production_order_id,
-                        deduct=True,
-                        loc=prev_loc,
-                    )
+                # if line_item:
+                #     dest_loc = LocationSchema().dump(
+                #         Location.get(move.dest_location_id)
+                #     )
+                #     prev_loc = LocationSchema().dump(Location.get(
+                #         move.src_location_id
+                #     ))
+                #     update = {
+                #         "location_id": move.dest_location_id,
+                #         "location": dest_loc
+                #     }
+                #     update_line_items(open_client, entity.id, update)
+                #     # update production_order total summary
+                #     update_prd_order_totals(
+                #         open_client,
+                #         move.dest_location_id,
+                #         line_item.production_order_id,
+                #         loc=dest_loc
+                #     )
+                #     update_prd_order_totals(
+                #         open_client,
+                #         move.src_location_id,
+                #         line_item.production_order_id,
+                #         deduct=True,
+                #         loc=prev_loc,
+                #     )
             except Exception as e:
                 logger.error(e)
                 DBErrorHandler(e)

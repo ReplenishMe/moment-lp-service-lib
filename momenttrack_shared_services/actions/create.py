@@ -6,7 +6,8 @@ from momenttrack_shared_models import (
     LicensePlate,
     Location,
     ActivityTypeEnum,
-    ProductionOrderLineitem
+    ProductionOrderLineitem,
+    EverythingReport
 )
 from momenttrack_shared_models.core.schemas import (
     LocationSchema,
@@ -131,7 +132,7 @@ class Create:
                         ProductionOrder.id == production_order_id
                     )
                 )
-                lp_report['production_order_id'] = order.docid
+                lp_report['production_order_id'] = order.id
                 existing_item = ProductionOrderLineitem.query.filter(
                     ProductionOrderLineitem.license_plate_id == license_plate.id,
                     ProductionOrderLineitem.production_order_id == production_order_id
@@ -146,83 +147,95 @@ class Create:
                     session=sess
                 )
                 po_lineitem.organization_id = self.org_id
-                try:
-                    sess.add(po_lineitem)
-                    sess.flush()
-                    obj = ProductionOrderLineitemSchema(
-                        only=(
-                            "id",
-                            "created_at",
-                            "license_plate_id",
-                            "status",
-                            "production_order_id",
-                            "organization_id",
-                        )
-                    ).dump(po_lineitem)
-                    obj["lp_id"] = None
-                    obj["location_id"] = None
-                    obj["location"] = None
-                    obj["external_serial_number"] = None
-                    obj["lp_id"] = license_plate.lp_id
-                    obj["location_id"] = license_plate.location_id
-                    obj["location"] = LocationSchema().dump(
-                        Location.get(license_plate.location_id)
-                    )
-                    obj["external_serial_number"] = license_plate.external_serial_number
-                    search_query = {
-                        "query": {
-                            "bool": {
-                                "must": [
-                                    {
-                                        "match": {
-                                            "production_order_id": po_lineitem.production_order_id
-                                        }
-                                    },
-                                    {"match": {"license_plate_id": license_plate.id}},
-                                ]
-                            }
-                        }
-                    }
-                    resp = client.search(
-                        index="production_order_lineitems_alias", body=search_query
-                    )
-                    logger.info("kk")
-                    logger.info("Attempting a made a check", resp)
-                    check = resp["hits"]["hits"]
+                # try:
+                #     sess.add(po_lineitem)
+                #     sess.flush()
+                #     obj = ProductionOrderLineitemSchema(
+                #         only=(
+                #             "id",
+                #             "created_at",
+                #             "license_plate_id",
+                #             "status",
+                #             "production_order_id",
+                #             "organization_id",
+                #         )
+                #     ).dump(po_lineitem)
+                #     obj["lp_id"] = None
+                #     obj["location_id"] = None
+                #     obj["location"] = None
+                #     obj["external_serial_number"] = None
+                #     obj["lp_id"] = license_plate.lp_id
+                #     obj["location_id"] = license_plate.location_id
+                #     obj["location"] = LocationSchema().dump(
+                #         Location.get(license_plate.location_id)
+                #     )
+                #     obj["external_serial_number"] = license_plate.external_serial_number
+                #     search_query = {
+                #         "query": {
+                #             "bool": {
+                #                 "must": [
+                #                     {
+                #                         "match": {
+                #                             "production_order_id": po_lineitem.production_order_id
+                #                         }
+                #                     },
+                #                     {"match": {"license_plate_id": license_plate.id}},
+                #                 ]
+                #             }
+                #         }
+                #     }
+                #     resp = client.search(
+                #         index="production_order_lineitems_alias", body=search_query
+                #     )
+                #     logger.info("kk")
+                #     logger.info("Attempting a made a check", resp)
+                #     check = resp["hits"]["hits"]
 
-                    if len(check) != 0:
-                        logger.info("update Attempting made many times ")
-                        client.index(
-                            index="production_order_lineitems_alias",
-                            body=obj, id=check[0]["_id"]
-                        )
-                    else:
-                        logger.info("Attempting a made for first time ")
-                        client.index(
-                            index="production_order_lineitems_alias",
-                            body=obj, id=po_lineitem.id
-                        )
-                    loc = Location.get_by_id_and_org(
-                        license_plate.location_id,
-                        self.org_id
-                    )
+                #     if len(check) != 0:
+                #         logger.info("update Attempting made many times ")
+                #         client.index(
+                #             index="production_order_lineitems_alias",
+                #             body=obj, id=check[0]["_id"]
+                #         )
+                #     else:
+                #         logger.info("Attempting a made for first time ")
+                #         client.index(
+                #             index="production_order_lineitems_alias",
+                #             body=obj, id=po_lineitem.id
+                #         )
+                #     loc = Location.get_by_id_and_org(
+                #         license_plate.location_id,
+                #         self.org_id
+                #     )
+                #     upsert_payload = {
+                #         'production_order_id': production_order_id,
+                #         'location': loc
+                #     }
+                #     upsert = LineItemTotals.upsert(
+                #         upsert_payload,
+                #         session=sess
+                #     )
+                #     if upsert.is_new:
+                #         sess.add(upsert.totals_object)
+                #     sess.commit()
+                #     update_prd_order_totals(
+                #         client,
+                #         license_plate.location_id,
+                #         po_lineitem.production_order_id,
+                #         loc=LocationSchema().dump(loc)
+                #     )
+                # except Exception as e:
+                #     DBErrorHandler(e)
+                try:
+                    loc = Location.get_by_id_and_org(license_plate.location_id, self.org_id)
                     upsert_payload = {
                         'production_order_id': production_order_id,
                         'location': loc
                     }
-                    upsert = LineItemTotals.upsert(
-                        upsert_payload,
-                        session=sess
-                    )
+                    upsert = LineItemTotals.upsert(upsert_payload, session=sess)
                     if upsert.is_new:
                         sess.add(upsert.totals_object)
                     sess.commit()
-                    update_prd_order_totals(
-                        client,
-                        license_plate.location_id,
-                        po_lineitem.production_order_id,
-                        loc=LocationSchema().dump(loc)
-                    )
                 except Exception as e:
                     DBErrorHandler(e)
 
@@ -238,8 +251,6 @@ class Create:
                 current_org_id=self.org_id,
                 current_user_id=self.user_id,
             )
-            schema = LicensePlateMadeItRequestSchema()
-            resp = schema.dump(license_plate)
 
             # log to opensearch
             self.log_made(license_plate)
@@ -247,7 +258,7 @@ class Create:
                 activity.created_at,
                 "%Y-%m-%d %H:%M:%S.%f"
             )
-            self.create_lp_report_entry(lp_report, client)
+            self.create_lp_report_entry(lp_report, session=sess)
 
             return license_plate
 
@@ -301,15 +312,22 @@ class Create:
                 )
                 logger.error(e)
 
-    def create_lp_report_entry(self, payload, client):
-        resp = client.index(
-            index="everything_report_idx",
-            body=payload,
-            id=payload['id']
-        )
-        shards = resp.get("_shards", {})
-        if shards.get("failed", 0) > 0:
-            raise Exception(
-                f"Warning: Operation succeeded, "
-                f"but {shards['failed']} shards failed."
-            )
+    def create_lp_report_entry(self, payload, session):
+        # resp = client.index(
+        #     index="everything_report_idx",
+        #     body=payload,
+        #     id=payload['id']
+        # )
+        # shards = resp.get("_shards", {})
+        # if shards.get("failed", 0) > 0:
+        #     raise Exception(
+        #         f"Warning: Operation succeeded, "
+        #         f"but {shards['failed']} shards failed."
+        #     )
+        try:
+            new_report = EverythingReport(**payload)
+            session.add(new_report)
+            session.flush()
+        except Exception as e:
+            session.rollback()
+            raise e
