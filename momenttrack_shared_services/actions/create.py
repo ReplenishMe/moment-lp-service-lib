@@ -99,7 +99,7 @@ class Create:
 
                 # If already exists, just update it.
                 for col, val in new_lp_dict.items():
-                    if not col in ['location_id']:
+                    if col not in ['location_id']:
                         setattr(existing_lp, col, val)
                 license_plate = existing_lp
                 message["converted"] = True
@@ -133,6 +133,7 @@ class Create:
                     )
                 )
                 lp_report['production_order_id'] = order.id
+                lp_report['product_id'] = order.product_id
                 existing_item = ProductionOrderLineitem.query.filter(
                     ProductionOrderLineitem.license_plate_id == license_plate.id,
                     ProductionOrderLineitem.production_order_id == production_order_id
@@ -265,12 +266,20 @@ class Create:
                 activity.created_at,
                 "%Y-%m-%d %H:%M:%S.%f"
             )
-            self.create_lp_report_entry(lp_report, session=sess)
+            lp_report_upsert_payload = {
+                'lp_id': license_plate.lp_id,
+                'po_id': lp_report.get('production_order_id', None),
+                'report_raw': lp_report
+            }
+            upsert = EverythingReport.upsert(lp_report_upsert_payload, sess)
+            if upsert.is_new:
+                sess.add(upsert.new_object)
             try:
                 sess.commit()
             except Exception as e:
                 sess.rollback()
                 raise e
+            print(license_plate.lp_id)
             return license_plate
 
     def rollback_documents(self, index, doc_ids):
