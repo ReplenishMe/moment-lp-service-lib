@@ -82,9 +82,9 @@ class LocationService:
             src_loc.lp_qty -= count
             dest_loc.lp_qty += count
 
-            session.commit()
+            session.flush()
 
     @staticmethod
     def add_lp(location, session=None, count=1):
         location.lp_qty += count
-        session.commit()
+        session.flush()

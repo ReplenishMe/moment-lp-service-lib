@@ -2,7 +2,7 @@ import datetime
 
 from loguru import logger
 from sqlalchemy.orm import lazyload
-from sqlalchemy import select, update
+from sqlalchemy import select, update, text
 from momenttrack_shared_models import (
     LicensePlateStatusEnum,
     LicensePlate,
@@ -15,11 +15,12 @@ from momenttrack_shared_models import (
     LineItemTotals,
     ProductionOrder,
     ProductionOrderLineitem,
-    Product
+    Product,
+    LineGraphData, LocationPartNoTotals,
 )
 from momenttrack_shared_models.core.schemas import (
     LicensePlateMoveSchema,
-    LocationSchema,
+    LocationSchema, LicensePlateReportSchema,
     LicensePlateOpenSearchSchema,
     LicensePlateMoveOpenSearchSchema,
     ContainerMoveSchema
@@ -94,6 +95,7 @@ class Move:
             )
 
             # lp checks
+            prod = None
             is_container = isinstance(mov_item, Container)
 
             if not is_container:
@@ -134,6 +136,8 @@ class Move:
                     .order_by(LicensePlateMove.created_at.desc())
                     .first()
                 )
+                prod = mov_item.product
+                schema = LicensePlateMoveOpenSearchSchema()
             else:
                 moveModel = ContainerMove
                 activityType = ActivityTypeEnum.CONTAINER_MOVE
@@ -156,7 +160,7 @@ class Move:
                     .order_by(ContainerMove.created_at.desc())
                     .first()
                 )
-
+                schema = ContainerMoveSchema()
             # verify if src & dest locs are same
             if mov_item.location_id == self.dest_location_id:
                 raise HttpError(
@@ -198,48 +202,61 @@ class Move:
                 prev_move.left_at = Move.created_at
 
                 # update log in OS
-                try:
-                    logger.info("OPENSEARCH: ATTEMPTING TO UPDATE MOVE LOG LEFT_AT")  # noqa: E501
-                    if not is_container:
-                        create_or_update_doc(
-                            client,
-                            prev_move,
-                            LicensePlateMoveSchema(),
-                            {"doc": {"left_at": Move.created_at}},
-                            "lp_move_alias",
-                        )
-                    else:
-                        create_or_update_doc(
-                            client,
-                            prev_move,
-                            ContainerMoveSchema(),
-                            {"doc": {"left_at": Move.created_at}},
-                            "container_move_alias"
-                        )
-                except Exception as e:
-                    logger.error(
-                        "OPENSEARCH: AN ERROR OCCURRED WHILE "
-                        " ATTEMPTING TO UPDATE LPMOVE LOG LEFT_AT"
-                    )
-                    logger.error(e)
+                # try:
+                #     logger.info("OPENSEARCH: ATTEMPTING TO UPDATE MOVE LOG LEFT_AT")  # noqa: E501
+                #     if not is_container:
+                #         create_or_update_doc(
+                #             client,
+                #             prev_move,
+                #             LicensePlateMoveSchema(),
+                #             {"doc": {"left_at": Move.created_at}},
+                #             "lp_move_alias",
+                #         )
+                #     else:
+                #         create_or_update_doc(
+                #             client,
+                #             prev_move,
+                #             ContainerMoveSchema(),
+                #             {"doc": {"left_at": Move.created_at}},
+                #             "container_move_alias"
+                #         )
+                # except Exception as e:
+                #     logger.error(
+                #         "OPENSEARCH: AN ERROR OCCURRED WHILE "
+                #         " ATTEMPTING TO UPDATE LPMOVE LOG LEFT_AT"
+                #     )
+                #     logger.error(e)
 
             # move to dest location
             mov_item.location_id = self.dest_location_id
 
             # flush changes from this transaction
-            # db.writer_session.flush()
             sess.flush()
+            sql = text("""
+                UPDATE location
+                SET average_duration = (
+                    SELECT
+                        CASE
+                            WHEN COUNT(*) < 2 THEN 0
+                            ELSE EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) / (COUNT(*) - 1)
+                        END
+                    FROM license_plate_move
+                    WHERE dest_location_id = :loc_id
+                )
+                WHERE id = :loc_id
+            """)
+            sess.execute(sql, {'loc_id': Move.dest_location_id})
             line_item = ProductionOrderLineitem.query.filter_by(
                 license_plate_id=mov_item.id
             ).order_by(ProductionOrderLineitem.created_at.desc()).first()
 
-            resp = self.log_move(
-                entity=mov_item,
-                move=Move,
-                open_client=client,
-                is_container=is_container,
-                line_item=line_item
-            )
+            # resp = self.log_move(
+            #     entity=mov_item,
+            #     move=Move,
+            #     open_client=client,
+            #     is_container=is_container,
+            #     line_item=line_item
+            # )
             if line_item:
                 po_id = line_item.production_order_id
                 stmt = (
@@ -266,18 +283,61 @@ class Move:
                         total_items=1
                     )
                     sess.add(new_stat)
-            Move.update_associated_report(
-                datetime.datetime.strftime(
-                    activity.created_at,
-                    "%Y-%m-%d %H:%M:%S.%f"
-                ),
-                sess
-            )
+            if not is_container:
+                LocationService.move_lp(
+                    Move.src_location_id,
+                    Move.dest_location_id,
+                    self.db,
+                    count=mov_item.quantity
+                )
+                # update linegraph info
+                upsert_payload = {
+                    'loc_id': Move.dest_location_id,
+                    'date_key': str(Move.created_at)[:10],
+                    'lp_move': Move,
+                    'part_number': prod.part_number
+                }
+                upsert = LineGraphData.upsert(upsert_payload, sess)
+                if upsert.is_new:
+                    sess.add(upsert.new_object)
+
+                # updatelocation part_no totals
+                src_loc_total = LocationPartNoTotals.get_by_location_id_and_part_number(
+                    Move.src_location_id, prod.part_number, sess
+                )
+                if src_loc_total.quantity:  # if greater than zero
+                    src_loc_total.quantity -= 1
+
+                # upsert dest loc
+                upsert_payload = {
+                    'loc_id': Move.dest_location_id,
+                    'product': prod
+                }
+                upsert = LocationPartNoTotals.upsert(upsert_payload, sess)
+                if upsert.is_new:
+                    sess.add(upsert.new_object)
+
+                # update everything report
+                lp_report = LicensePlateReportSchema(
+                    exclude=(
+                        'last_interaction', 'when_last_movement',
+                        'who_moved_last', 'id',
+                    )
+                ).dump(mov_item)
+                Move.update_associated_report(
+                    datetime.datetime.strftime(
+                        activity.created_at,
+                        "%Y-%m-%d %H:%M:%S.%f"
+                    ),
+                    lp_report,
+                    sess
+                )
             try:
                 sess.commit()
             except Exception as e:
                 sess.rollback()
                 raise e
+            resp = schema.dump(Move)
             return resp
 
     def log_move(
