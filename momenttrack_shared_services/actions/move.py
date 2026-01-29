@@ -284,6 +284,7 @@ class Move:
                     )
                     sess.add(new_stat)
             if not is_container:
+                print("MOV ITEM", mov_item, Move.src_location_id, prod.part_number)
                 LocationService.move_lp(
                     Move.src_location_id,
                     Move.dest_location_id,
@@ -305,6 +306,7 @@ class Move:
                 src_loc_total = LocationPartNoTotals.get_by_location_id_and_part_number(
                     Move.src_location_id, prod.part_number, sess
                 )
+                print(src_loc_total, 'SRC LOC TOTAL')
                 if src_loc_total.quantity:  # if greater than zero
                     src_loc_total.quantity -= 1
 
@@ -487,14 +489,19 @@ class Move:
         obj = None
 
         obj = LicensePlate.get_by_lp_id_or_id_and_org(
-            self.move_item_id, self.org_id, session=db.writer_session()
+            self.move_item_id, self.org_id, session=db.writer_session
         )
         if not obj:
             obj = Container.get_by_id_or_by_container_id(
                 self.move_item_id, self.org_id,
-                session=db.writer_session()
+                session=db.writer_session
             )
         if not obj:
+            sess = db.writer_session
+            prod = Product.get_system_product(
+                self.org_id
+            )
+            sys_loc = Location.get_system_location(self.org_id)
             # check if its a container
             print("License plate doesn't already exist creating ...")
             cr = Create(
@@ -513,6 +520,16 @@ class Move:
                 quantity=1,
                 organization_id=self.org_id
             )
+            upsert = LocationPartNoTotals.up_sert(
+                {
+                    'loc_id': sys_loc.id,
+                    'product': prod
+                },
+                session=sess
+            )
+            if upsert.is_new:
+                sess.add(upsert.new_object)
+                sess.commit()
             try:
                 obj = cr.execute(
                     license_plate,

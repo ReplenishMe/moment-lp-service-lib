@@ -127,17 +127,17 @@ class ActivityService:
 
         try:
             sess.flush()
-            data = {
-                "id": activity.id,
-                "user_id": activity.user_id,
-                "organization_id": activity.organization_id,
-                "ip_address": activity.ip_address,
-                "created_at": activity.created_at,
-                "activity_type": activity.activity_type,
-                "model_name": activity.model_name,
-                "model_id": activity.model_id,
-            }
-            self.client.index(index="activity", body=data)
+            # data = {
+            #     "id": activity.id,
+            #     "user_id": activity.user_id,
+            #     "organization_id": activity.organization_id,
+            #     "ip_address": activity.ip_address,
+            #     "created_at": activity.created_at,
+            #     "activity_type": activity.activity_type,
+            #     "model_name": activity.model_name,
+            #     "model_id": activity.model_id,
+            # }
+            # self.client.index(index="activity", body=data)
         except Exception as e:
             DBErrorHandler(e)
 
