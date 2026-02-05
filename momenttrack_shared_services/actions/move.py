@@ -303,12 +303,16 @@ class Move:
                     sess.add(upsert.new_object)
 
                 # updatelocation part_no totals
-                src_loc_total = LocationPartNoTotals.get_by_location_id_and_part_number(
-                    Move.src_location_id, prod.part_number, sess
+                upsert_payload = {
+                    'loc_id': Move.src_location_id,
+                    'product': prod
+                }
+                src_loc_total = LocationPartNoTotals.get_src_loc_total(
+                    upsert_payload, session=sess
                 )
-                print(src_loc_total, 'SRC LOC TOTAL')
-                if src_loc_total.quantity:  # if greater than zero
-                    src_loc_total.quantity -= 1
+                if not src_loc_total.is_new:
+                    if src_loc_total.new_object.quantity:  # if greater than zero
+                        src_loc_total.new_object.quantity -= 1
 
                 # upsert dest loc
                 upsert_payload = {
