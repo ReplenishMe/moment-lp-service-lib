@@ -7,7 +7,7 @@ from momenttrack_shared_models import (
     Location,
     ActivityTypeEnum,
     ProductionOrderLineitem,
-    EverythingReport
+    EverythingReport, LocationPartNoTotals
 )
 from momenttrack_shared_models.core.schemas import (
     LocationSchema,
@@ -238,6 +238,11 @@ class Create:
                         'location': loc
                     }
                     LineItemTotals.upsert(upsert_payload, session=sess)
+                    upsert_payload = {
+                        'loc_id': license_plate.location_id,
+                        'product': order.product
+                    }
+                    LocationPartNoTotals.upsert(upsert_payload, sess)
                     sess.flush()
                 except Exception as e:
                     DBErrorHandler(e)
