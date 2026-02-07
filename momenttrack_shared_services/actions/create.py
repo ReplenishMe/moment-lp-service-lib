@@ -237,17 +237,14 @@ class Create:
                         'production_order_id': production_order_id,
                         'location': loc
                     }
-                    upsert = LineItemTotals.upsert(
-                        upsert_payload,
-                        session=sess
-                    )
-                    if upsert.is_new:
-                        sess.add(upsert.totals_object)
+                    LineItemTotals.upsert(upsert_payload, session=sess)
                     sess.flush()
                 except Exception as e:
                     DBErrorHandler(e)
 
                 message["production_order_id"] = production_order_id
+                # update everything report with order id
+                lp_report['production_order_id'] = production_order_id
 
             # Create a activity
             activity = self.activity_service.log(
@@ -271,9 +268,7 @@ class Create:
                 'po_id': lp_report.get('production_order_id', None),
                 'report_raw': lp_report
             }
-            upsert = EverythingReport.upsert(lp_report_upsert_payload, sess)
-            if upsert.is_new:
-                sess.add(upsert.new_object)
+            EverythingReport.upsert(lp_report_upsert_payload, sess)
             try:
                 sess.commit()
             except Exception as e:

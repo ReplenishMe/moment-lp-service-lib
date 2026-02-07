@@ -296,33 +296,23 @@ class Move:
                     'loc_id': Move.dest_location_id,
                     'date_key': str(Move.created_at)[:10],
                     'lp_move': Move,
-                    'part_number': prod.part_number
+                    'product': prod
                 }
-                upsert = LineGraphData.upsert(upsert_payload, sess)
-                if upsert.is_new:
-                    sess.add(upsert.new_object)
-
-                # updatelocation part_no totals
+                LineGraphData.upsert(upsert_payload, sess)
+                # update location part_no totals
                 upsert_payload = {
                     'loc_id': Move.src_location_id,
                     'product': prod
                 }
-                src_loc_total = LocationPartNoTotals.get_src_loc_total(
+                LocationPartNoTotals.upsert_src_loc_total(
                     upsert_payload, session=sess
                 )
-                if not src_loc_total.is_new:
-                    if src_loc_total.new_object.quantity:  # if greater than zero
-                        src_loc_total.new_object.quantity -= 1
-
                 # upsert dest loc
                 upsert_payload = {
                     'loc_id': Move.dest_location_id,
                     'product': prod
                 }
-                upsert = LocationPartNoTotals.upsert(upsert_payload, sess)
-                if upsert.is_new:
-                    sess.add(upsert.new_object)
-
+                LocationPartNoTotals.upsert(upsert_payload, sess)
                 # update everything report
                 lp_report = LicensePlateReportSchema(
                     exclude=(
@@ -524,16 +514,14 @@ class Move:
                 quantity=1,
                 organization_id=self.org_id
             )
-            upsert = LocationPartNoTotals.up_sert(
+            LocationPartNoTotals.up_sert(
                 {
                     'loc_id': sys_loc.id,
                     'product': prod
                 },
                 session=sess
             )
-            if upsert.is_new:
-                sess.add(upsert.new_object)
-                sess.commit()
+            sess.commit()
             try:
                 obj = cr.execute(
                     license_plate,
