@@ -1,3 +1,4 @@
+import copy
 import datetime
 
 from loguru import logger
@@ -10,26 +11,22 @@ from momenttrack_shared_models import (
     EverythingReport, LocationPartNoTotals
 )
 from momenttrack_shared_models.core.schemas import (
-    LocationSchema,
     LicensePlateReportSchema,
-    LicensePlateMadeItRequestSchema,
     ProductionOrder,
-    LicensePlateOpenSearchSchema,
     ProductionOrderLineitemSchema,
     LineItemTotals
 )
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-
 from momenttrack_shared_services.utils.activity import ActivityService
 from momenttrack_shared_services.utils import (
     DBErrorHandler,
     saobj_as_dict,
-    DataValidationError,
-    HttpError,
-    get_diff,
-    update_prd_order_totals
+    get_diff
 )
+
+from momenttrack_shared_services.exc import DuplicateMadeTransactionError
+import momenttrack_shared_services.messages as MSG
 
 
 def add_lp(location, session=None, count=1):
@@ -82,18 +79,19 @@ class Create:
                     "Location doesn't exist, assigning system \
                         location automatically."
                 )
-                license_plate.location_id = Location.get_system_location(
-                    self.org_id
-                ).id
-
+                loc = Location.get_system_location(self.org_id, session=sess)
+                license_plate.location_id = loc.id
+            else:
+                loc = Location.get_by_id(license_plate.location_id, session=sess)
             # Check if the LP already exists
             existing_lp = LicensePlate.get_by_lp_id_and_org(
                 license_plate.lp_id, self.org_id, session=sess
             )
+            prev_product = existing_lp.product if existing_lp else None
+            intake_data_copy = copy.deepcopy(license_plate)  # preserve data even after a potential rollback
             if existing_lp:
                 # if  not self.check_prev_move(existing_lp):
                 #     return 1
-
                 old_lp_dict = saobj_as_dict(existing_lp)
                 new_lp_dict = saobj_as_dict(license_plate)
 
@@ -139,7 +137,37 @@ class Create:
                     ProductionOrderLineitem.production_order_id == production_order_id
                 ).first()
                 if existing_item:
-                    DBErrorHandler(Exception('lineitem with lp_id already exists'))
+                    # log and return
+                    sess.rollback()  # rollback any pending change
+                    # re-copy transferrable lp data
+                    old_lp_dict = saobj_as_dict(existing_lp)
+                    new_lp_dict = saobj_as_dict(intake_data_copy)
+                    # If already exists, just update it.
+                    for col, val in new_lp_dict.items():
+                        if not col in ['location_id']:
+                            setattr(existing_lp, col, val)
+                    license_plate = existing_lp
+                    message["converted"] = True
+                    message["diff"] = get_diff(
+                        old_lp_dict, new_lp_dict, ignore_keys=["id", "created_at", "updated_at"]
+                    )
+                    # write log with metadata
+                    activity = self.activity_service.log(
+                        "license_plate",
+                        license_plate.id,
+                        ActivityTypeEnum.LICENSE_PLATE_MADEIT,
+                        sess,
+                        metadata={
+                            'made_status': False,
+                            'prev_part_number': prev_product.part_number
+                        },
+                        message=MSG.ATTEMPT_TO_REMAKE_LP,
+                        current_org_id=self.org_id,
+                        current_user_id=self.user_id
+                    )
+                    sess.commit()
+                    raise DuplicateMadeTransactionError(MSG.ATTEMPT_TO_REMAKE_LP)
+
                 po_lineitem = ProductionOrderLineitemSchema().load(
                     {
                         "production_order_id": production_order_id,
@@ -149,85 +177,6 @@ class Create:
                 )
                 po_lineitem.organization_id = self.org_id
                 sess.add(po_lineitem)
-                # try:
-                #     sess.add(po_lineitem)
-                #     sess.flush()
-                #     obj = ProductionOrderLineitemSchema(
-                #         only=(
-                #             "id",
-                #             "created_at",
-                #             "license_plate_id",
-                #             "status",
-                #             "production_order_id",
-                #             "organization_id",
-                #         )
-                #     ).dump(po_lineitem)
-                #     obj["lp_id"] = None
-                #     obj["location_id"] = None
-                #     obj["location"] = None
-                #     obj["external_serial_number"] = None
-                #     obj["lp_id"] = license_plate.lp_id
-                #     obj["location_id"] = license_plate.location_id
-                #     obj["location"] = LocationSchema().dump(
-                #         Location.get(license_plate.location_id)
-                #     )
-                #     obj["external_serial_number"] = license_plate.external_serial_number
-                #     search_query = {
-                #         "query": {
-                #             "bool": {
-                #                 "must": [
-                #                     {
-                #                         "match": {
-                #                             "production_order_id": po_lineitem.production_order_id
-                #                         }
-                #                     },
-                #                     {"match": {"license_plate_id": license_plate.id}},
-                #                 ]
-                #             }
-                #         }
-                #     }
-                #     resp = client.search(
-                #         index="production_order_lineitems_alias", body=search_query
-                #     )
-                #     logger.info("kk")
-                #     logger.info("Attempting a made a check", resp)
-                #     check = resp["hits"]["hits"]
-
-                #     if len(check) != 0:
-                #         logger.info("update Attempting made many times ")
-                #         client.index(
-                #             index="production_order_lineitems_alias",
-                #             body=obj, id=check[0]["_id"]
-                #         )
-                #     else:
-                #         logger.info("Attempting a made for first time ")
-                #         client.index(
-                #             index="production_order_lineitems_alias",
-                #             body=obj, id=po_lineitem.id
-                #         )
-                #     loc = Location.get_by_id_and_org(
-                #         license_plate.location_id,
-                #         self.org_id
-                #     )
-                #     upsert_payload = {
-                #         'production_order_id': production_order_id,
-                #         'location': loc
-                #     }
-                #     upsert = LineItemTotals.upsert(
-                #         upsert_payload,
-                #         session=sess
-                #     )
-                #     if upsert.is_new:
-                #         sess.add(upsert.totals_object)
-                #     sess.commit()
-                #     update_prd_order_totals(
-                #         client,
-                #         license_plate.location_id,
-                #         po_lineitem.production_order_id,
-                #         loc=LocationSchema().dump(loc)
-                #     )
-                # except Exception as e:
-                #     DBErrorHandler(e)
                 try:
                     loc = Location.get_by_id_and_org(
                         license_plate.location_id,

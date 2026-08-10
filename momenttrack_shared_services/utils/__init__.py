@@ -122,10 +122,16 @@ def validate_foreignkey_violation(e):
     return None
 
 
-def DBErrorHandler(e):
+def DBErrorHandler(e, sess=None):
     """handle certain db related exceptions"""
-    db.session.rollback()
-    db.writer_session.rollback()
+    _sess = db.session if not sess else sess
+
+    if _sess:
+        _sess.rollback()
+    else:
+        # blindly rollback current transactions
+        db.session.rollback()
+        db.writer_session.rollback()
 
     # 1. Check if error is due to unique constraint violation
     uniq_error_cols = validate_unique_violation(e)

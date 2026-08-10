@@ -120,6 +120,7 @@ class ActivityService:
             loggedin_user_id=self.user_id,
             organization_id=self.org_id,
             message=kwargs.get("message", None),
+            meta_data=kwargs.get("metadata", {}),
             activity_type=activity_type,
             ip_address=ip_address,
         )
